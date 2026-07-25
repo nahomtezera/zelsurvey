@@ -217,6 +217,7 @@ export default function App() {
                 transactions={userTransactions}
                 investments={userInvestments}
                 onSeedDemoData={handleSeedDemoData}
+                showToast={showToast}
               />
             )}
 

@@ -22,13 +22,9 @@ import {
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { User, Transaction, ActiveTab, UserInvestment } from '../../types';
-import { 
-  getMembershipInfo, 
-  checkDailyCheckInStatus, 
-  getAllAchievements, 
-  getProfileCompletion 
-} from '../../services/gamificationService';
+import { getMembershipInfo, checkDailyCheckInStatus, getAllAchievements, getProfileCompletion } from '../../services/gamificationService';
 import { getPlatformSettings } from '../../services/storage';
+import { DashboardReferralSection } from './DashboardReferralSection';
 
 interface UserDashboardProps {
   user: User;
@@ -36,6 +32,7 @@ interface UserDashboardProps {
   transactions: Transaction[];
   investments: UserInvestment[];
   onSeedDemoData?: () => void;
+  showToast?: (type: 'success' | 'error' | 'info', title: string, message?: string) => void;
 }
 
 export const UserDashboard: React.FC<UserDashboardProps> = ({
@@ -44,6 +41,7 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
   transactions,
   investments,
   onSeedDemoData,
+  showToast,
 }) => {
   const membership = getMembershipInfo(user);
   const dailyStatus = checkDailyCheckInStatus(user);
@@ -168,6 +166,9 @@ export const UserDashboard: React.FC<UserDashboardProps> = ({
           </div>
         </div>
       </div>
+
+      {/* DASHBOARD REFERRAL CARD (IMMEDIATELY BELOW WALLET CARD) */}
+      <DashboardReferralSection user={user} showToast={showToast} />
 
       {/* THREE INTERACTIVE HIGHLIGHT CARDS: MEMBERSHIP, DAILY CHECK-IN, PROFILE COMPLETION */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

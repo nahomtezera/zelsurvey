@@ -54,6 +54,7 @@ import {
   deleteUserAccount,
   addNotification,
   isSuperAdminAccount,
+  triggerReferralReward,
   PlatformSettings
 } from '../../services/storage';
 import { User, DepositRequest, WithdrawalRequest, InvestmentPlan, Transaction } from '../../types';
@@ -118,6 +119,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // Broadcast Form
   const [ancTitle, setAncTitle] = useState('');
   const [ancMessage, setAncMessage] = useState('');
+
+  // Referral Management States
+  const [referralSearch, setReferralSearch] = useState('');
+  const [referralFilter, setReferralFilter] = useState<'All' | 'Paid' | 'Pending'>('All');
 
   // Platform Settings Form
   const [settingsForm, setSettingsForm] = useState<PlatformSettings>(() => getPlatformSettings());

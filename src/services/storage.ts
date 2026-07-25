@@ -490,27 +490,44 @@ export function approveDeposit(depositId: string, adminNotes?: string): { succes
     user.balance += deposit.amount;
     user.totalDeposits += deposit.amount;
 
-    // Check if referrer gets bonus (e.g. 5% referral reward)
+    // Check if referrer gets ETB 100 referral reward for ETB 1,000+ deposit
     if (user.referredBy) {
       const users = getUsers();
       const referrer = users.find((u) => u.referralCode.toLowerCase() === user.referredBy?.toLowerCase());
       if (referrer) {
-        const bonus = deposit.amount * 0.05; // 5% bonus
-        referrer.balance += bonus;
-        referrer.referralEarnings += bonus;
+        // Calculate 5% commission or ETB 100 referral bonus
+        const commission = deposit.amount * 0.05;
+        let rewardTotal = commission;
+
+        // If deposit >= 1000 ETB and reward not paid yet, ensure at least ETB 100 reward
+        let awardReferralBonus = false;
+        if (deposit.amount >= 1000 && !user.referralRewardPaid) {
+          awardReferralBonus = true;
+          user.referralRewardPaid = true;
+          if (rewardTotal < 100) {
+            rewardTotal = 100;
+          }
+        }
+
+        referrer.balance += rewardTotal;
+        referrer.referralEarnings += rewardTotal;
         updateUser(referrer);
 
         addTransaction({
           userId: referrer.id,
           type: 'Referral Commission',
-          amount: bonus,
-          description: `5% referral commission from ${user.fullName}'s deposit`,
+          amount: rewardTotal,
+          description: awardReferralBonus
+            ? `ETB 100 Referral Reward for inviting ${user.fullName}`
+            : `5% referral commission from ${user.fullName}'s deposit`,
           status: 'Completed',
         });
 
         addNotification(referrer.id, {
-          title: 'Referral Bonus Credited!',
-          message: `You earned ETB ${bonus.toLocaleString()} from ${user.fullName}'s verified deposit!`,
+          title: 'Referral Reward Credited! 🎉',
+          message: awardReferralBonus
+            ? `You earned ETB 100 because ${user.fullName} completed an approved deposit of ETB ${deposit.amount.toLocaleString()}!`
+            : `You earned ETB ${rewardTotal.toLocaleString()} from ${user.fullName}'s verified deposit!`,
           type: 'referral',
         });
       }
@@ -575,6 +592,50 @@ export function rejectDeposit(depositId: string, adminNotes?: string): { success
   });
 
   return { success: true, message: 'Deposit request rejected.' };
+}
+
+// Admin: Manual Trigger Referral Reward (ETB 100)
+export function triggerReferralReward(referredUserId: string): { success: boolean; message: string } {
+  const users = getUsers();
+  const refUser = users.find((u) => u.id === referredUserId);
+  if (!refUser) return { success: false, message: 'Referred user profile not found.' };
+
+  if (refUser.referralRewardPaid) {
+    return { success: false, message: 'Referral reward (ETB 100) has already been issued for this user.' };
+  }
+
+  if (!refUser.referredBy) {
+    return { success: false, message: 'This user was not registered via a referral code.' };
+  }
+
+  const referrer = users.find((u) => u.referralCode.toLowerCase() === refUser.referredBy?.toLowerCase());
+  if (!referrer) {
+    return { success: false, message: 'Referrer profile not found.' };
+  }
+
+  // Credit ETB 100 reward
+  refUser.referralRewardPaid = true;
+  updateUser(refUser);
+
+  referrer.balance += 100;
+  referrer.referralEarnings += 100;
+  updateUser(referrer);
+
+  addTransaction({
+    userId: referrer.id,
+    type: 'Referral Commission',
+    amount: 100,
+    description: `ETB 100 Referral Reward for inviting ${refUser.fullName}`,
+    status: 'Completed',
+  });
+
+  addNotification(referrer.id, {
+    title: 'Referral Reward Credited! 🎉',
+    message: `You earned ETB 100 because ${refUser.fullName} was verified!`,
+    type: 'referral',
+  });
+
+  return { success: true, message: `ETB 100 referral reward successfully credited to ${referrer.fullName}.` };
 }
 
 // Withdrawal Actions
