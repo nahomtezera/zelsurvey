@@ -1395,59 +1395,234 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           )}
 
           {/* 7. REFERRALS MANAGEMENT TAB */}
-          {activeTab === 'referrals' && (
-            <div className="space-y-6 w-full">
-              
-              <div>
-                <h1 className="text-2xl font-black text-white">Referral System Configuration</h1>
-                <p className="text-xs text-slate-400">Manage affiliate referral commission structures and commission bonus tiers.</p>
-              </div>
+          {activeTab === 'referrals' && (() => {
+            const relationships = users
+              .filter((u) => u.referredBy)
+              .map((refUser) => {
+                const referrer = users.find((u) => u.referralCode.toLowerCase() === refUser.referredBy?.toLowerCase());
+                const userDeps = deposits.filter((d) => d.userId === refUser.id);
+                const qualifyingApprovedDeposit = userDeps.find((d) => d.status === 'Approved' && d.amount >= 1000);
+                const pendingDeposit = userDeps.find((d) => d.status === 'Pending');
 
-              <div className="grid md:grid-cols-2 gap-6">
-                <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
-                  <h3 className="text-base font-bold text-white">Referral Commission Rules</h3>
-                  <p className="text-xs text-slate-400">When an invited investor deposits funds and gets verified by an admin, the referrer receives an instant bonus.</p>
+                return {
+                  refUser,
+                  referrer,
+                  qualifyingApprovedDeposit,
+                  pendingDeposit,
+                  rewardStatus: refUser.referralRewardPaid ? ('Paid' as const) : ('Pending' as const),
+                };
+              });
 
-                  <div className="p-4 rounded-xl bg-purple-950/30 border border-purple-800/40 text-xs space-y-2">
-                    <p className="font-bold text-purple-200">Current Rate: {settingsForm.referralCommissionPercent}% Direct Commission</p>
-                    <p className="text-slate-400">Automatically calculated on every approved deposit.</p>
-                  </div>
+            const totalRelationships = relationships.length;
+            const paidRewardsCount = relationships.filter((r) => r.rewardStatus === 'Paid').length;
+            const pendingRewardsCount = totalRelationships - paidRewardsCount;
+            const totalPaidAmount = paidRewardsCount * 100;
 
-                  <button
-                    onClick={() => setActiveTab('settings')}
-                    className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs transition-colors cursor-pointer"
-                  >
-                    Change Commission Rate in Settings
-                  </button>
+            const filtered = relationships.filter((rel) => {
+              const matchesFilter =
+                referralFilter === 'All'
+                  ? true
+                  : referralFilter === 'Paid'
+                  ? rel.rewardStatus === 'Paid'
+                  : rel.rewardStatus === 'Pending';
+
+              const s = referralSearch.toLowerCase();
+              const matchesSearch =
+                !referralSearch ||
+                rel.refUser.fullName.toLowerCase().includes(s) ||
+                rel.refUser.email.toLowerCase().includes(s) ||
+                (rel.refUser.referredBy && rel.refUser.referredBy.toLowerCase().includes(s)) ||
+                (rel.referrer && rel.referrer.fullName.toLowerCase().includes(s)) ||
+                (rel.referrer && rel.referrer.email.toLowerCase().includes(s));
+
+              return matchesFilter && matchesSearch;
+            });
+
+            const handleManualTrigger = (refUserId: string) => {
+              const res = triggerReferralReward(refUserId);
+              if (res.success) {
+                showToast('success', 'Reward Issued!', res.message);
+                onDataChanged();
+              } else {
+                showToast('error', 'Cannot Issue Reward', res.message);
+              }
+            };
+
+            return (
+              <div className="space-y-6 w-full">
+                
+                <div>
+                  <h1 className="text-2xl font-black text-white">Referral Program Management</h1>
+                  <p className="text-xs text-slate-400">Track all referrer-referred relationships, deposit qualification, and ETB 100 rewards.</p>
                 </div>
 
-                <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
-                  <h3 className="text-base font-bold text-white">Top Affiliate Leaderboard</h3>
-                  <div className="space-y-2 text-xs">
-                    {users
-                      .slice()
-                      .sort((a, b) => (b.referralEarnings || 0) - (a.referralEarnings || 0))
-                      .slice(0, 5)
-                      .map((u, i) => (
-                        <div key={u.id} className="flex justify-between items-center p-3 rounded-xl bg-slate-800/60">
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-purple-400">#{i + 1}</span>
-                            <div>
-                              <p className="font-bold text-white">{u.fullName}</p>
-                              <p className="text-[10px] text-slate-400">{u.email}</p>
-                            </div>
-                          </div>
-                          <span className="font-black text-emerald-400">
-                            ETB {(u.referralEarnings || 0).toLocaleString()}
-                          </span>
-                        </div>
-                      ))}
+                {/* 4 Summary Stats */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between text-slate-400">
+                      <span className="text-xs font-bold uppercase">Total Referrals</span>
+                      <Users className="w-5 h-5 text-blue-400" />
+                    </div>
+                    <p className="text-2xl font-black text-white">{totalRelationships}</p>
+                    <p className="text-[11px] text-slate-400">Tracked connections</p>
+                  </div>
+
+                  <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between text-slate-400">
+                      <span className="text-xs font-bold uppercase">Paid Rewards</span>
+                      <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                    </div>
+                    <p className="text-2xl font-black text-emerald-400">{paidRewardsCount}</p>
+                    <p className="text-[11px] text-emerald-400 font-medium">Approved deposits (&ge; ETB 1k)</p>
+                  </div>
+
+                  <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between text-slate-400">
+                      <span className="text-xs font-bold uppercase">Pending Rewards</span>
+                      <Activity className="w-5 h-5 text-amber-400" />
+                    </div>
+                    <p className="text-2xl font-black text-amber-400">{pendingRewardsCount}</p>
+                    <p className="text-[11px] text-slate-400">Awaiting qualifying deposit</p>
+                  </div>
+
+                  <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between text-slate-400">
+                      <span className="text-xs font-bold uppercase">Total Payouts</span>
+                      <DollarSign className="w-5 h-5 text-purple-400" />
+                    </div>
+                    <p className="text-2xl font-black text-purple-400">ETB {totalPaidAmount.toLocaleString()}</p>
+                    <p className="text-[11px] text-slate-400">ETB 100 per qualification</p>
                   </div>
                 </div>
-              </div>
 
-            </div>
-          )}
+                {/* Filter and Search Toolbar */}
+                <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-4 flex-wrap">
+                  <div className="relative flex-1 min-w-[220px]">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                    <input
+                      type="text"
+                      placeholder="Search referrer, referred user, or referral code..."
+                      value={referralSearch}
+                      onChange={(e) => setReferralSearch(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs outline-none focus:ring-2 focus:ring-purple-500"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-400 font-bold">Status:</span>
+                    <select
+                      value={referralFilter}
+                      onChange={(e) => setReferralFilter(e.target.value as any)}
+                      className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs outline-none cursor-pointer font-bold"
+                    >
+                      <option value="All">All Relationships</option>
+                      <option value="Paid">Reward Paid (ETB 100)</option>
+                      <option value="Pending">Reward Pending</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Referrals Table */}
+                <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
+                  <div className="flex justify-between items-center">
+                    <h3 className="text-base font-bold text-white">Referral Audit Trail</h3>
+                    <span className="text-xs text-purple-400 font-bold">{filtered.length} records</span>
+                  </div>
+
+                  {filtered.length === 0 ? (
+                    <div className="p-8 text-center bg-slate-800/40 rounded-xl border border-dashed border-slate-700 text-slate-400 text-xs">
+                      No referral records match your current filter criteria.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider font-extrabold">
+                            <th className="pb-3 pl-2">Referrer</th>
+                            <th className="pb-3">Referred User</th>
+                            <th className="pb-3">Registration Date</th>
+                            <th className="pb-3">Qualifying Deposit Status</th>
+                            <th className="pb-3">Reward Status</th>
+                            <th className="pb-3 pr-2 text-right">Admin Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/80 font-semibold">
+                          {filtered.map((row) => (
+                            <tr key={row.refUser.id} className="hover:bg-slate-800/40 transition-colors">
+                              <td className="py-3.5 pl-2">
+                                {row.referrer ? (
+                                  <div>
+                                    <div className="font-extrabold text-white">{row.referrer.fullName}</div>
+                                    <div className="text-[10px] text-slate-400 font-mono">Code: {row.referrer.referralCode} • {row.referrer.email}</div>
+                                  </div>
+                                ) : (
+                                  <div>
+                                    <div className="font-extrabold text-amber-400">Code: {row.refUser.referredBy}</div>
+                                    <div className="text-[10px] text-slate-500">Referrer account missing</div>
+                                  </div>
+                                )}
+                              </td>
+
+                              <td className="py-3.5">
+                                <div className="font-extrabold text-white">{row.refUser.fullName}</div>
+                                <div className="text-[10px] text-slate-400 font-mono">@{row.refUser.username} • {row.refUser.email}</div>
+                              </td>
+
+                              <td className="py-3.5 text-slate-400">
+                                {new Date(row.refUser.createdAt).toLocaleDateString()}
+                              </td>
+
+                              <td className="py-3.5">
+                                {row.qualifyingApprovedDeposit ? (
+                                  <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                    Approved (ETB {row.qualifyingApprovedDeposit.amount.toLocaleString()})
+                                  </span>
+                                ) : row.pendingDeposit ? (
+                                  <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                    Pending (ETB {row.pendingDeposit.amount.toLocaleString()})
+                                  </span>
+                                ) : (
+                                  <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400 border border-slate-700">
+                                    No Qualifying Deposit (&lt; 1k)
+                                  </span>
+                                )}
+                              </td>
+
+                              <td className="py-3.5">
+                                {row.rewardStatus === 'Paid' ? (
+                                  <span className="inline-flex items-center gap-1 text-emerald-400 font-extrabold">
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                    <span>Paid (ETB 100)</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-amber-400 font-bold">
+                                    <Activity className="w-3.5 h-3.5" />
+                                    <span>Pending</span>
+                                  </span>
+                                )}
+                              </td>
+
+                              <td className="py-3.5 pr-2 text-right">
+                                {row.rewardStatus === 'Pending' && row.qualifyingApprovedDeposit && (
+                                  <button
+                                    onClick={() => handleManualTrigger(row.refUser.id)}
+                                    className="px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-[11px] shadow transition-all cursor-pointer"
+                                  >
+                                    Verify & Trigger ETB 100
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+              </div>
+            );
+          })()}
 
           {/* 8. ANNOUNCEMENTS TAB */}
           {activeTab === 'announcements' && (
