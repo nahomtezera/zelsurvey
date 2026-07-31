@@ -15,7 +15,7 @@ export const WithdrawView: React.FC<WithdrawViewProps> = ({ user, onWithdrawalCr
   const minAmount = platformSettings.minWithdrawalAmount || 5000;
 
   const [amount, setAmount] = useState<string>(minAmount.toString());
-  const [method, setMethod] = useState<string>('Bank Transfer');
+  const [method, setMethod] = useState<string>('Commercial Bank of Ethiopia (CBE)');
   const [accountInfo, setAccountInfo] = useState<string>('');
   const [accountName, setAccountName] = useState<string>('');
   const [loading, setLoading] = useState(false);
@@ -46,7 +46,8 @@ export const WithdrawView: React.FC<WithdrawViewProps> = ({ user, onWithdrawalCr
     }
 
     if (!accountInfo.trim()) {
-      setErrorMessage('Please enter your account number or phone number.');
+      const msg = method === 'Telebirr' ? 'Please enter your Telebirr phone number.' : 'Please enter your account number.';
+      setErrorMessage(msg);
       return;
     }
 
@@ -165,21 +166,23 @@ export const WithdrawView: React.FC<WithdrawViewProps> = ({ user, onWithdrawalCr
                 onChange={(e) => setMethod(e.target.value)}
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none font-medium"
               >
-                <option value="Bank Transfer">Bank Transfer</option>
-                <option value="Telebirr Mobile Money">Telebirr / Mobile Money</option>
-                <option value="Local Bank Account">Local Bank Account</option>
+                <option value="Commercial Bank of Ethiopia (CBE)">Commercial Bank of Ethiopia (CBE)</option>
+                <option value="Bank of Abyssinia">Bank of Abyssinia</option>
+                <option value="Awash Bank">Awash Bank</option>
+                <option value="Telebirr">Telebirr</option>
               </select>
             </div>
 
             <div>
               <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Account Holder Name
+                {method === 'Telebirr' ? 'Telebirr Account Holder Name' : 'Account Holder Name'}
               </label>
               <input
                 type="text"
                 placeholder="e.g. Abebe Tadesse"
                 value={accountName}
                 onChange={(e) => setAccountName(e.target.value)}
+                required
                 className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
               />
             </div>
@@ -187,11 +190,11 @@ export const WithdrawView: React.FC<WithdrawViewProps> = ({ user, onWithdrawalCr
 
           <div>
             <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Account Number / Telebirr Phone Number
+              {method === 'Telebirr' ? 'Telebirr Phone Number' : 'Account Number'}
             </label>
             <input
               type="text"
-              placeholder="e.g. 1000 1234 5678 or +251 911..."
+              placeholder={method === 'Telebirr' ? 'e.g. 0911234567 or +251 911...' : 'e.g. 1000 1234 5678'}
               value={accountInfo}
               onChange={(e) => setAccountInfo(e.target.value)}
               required

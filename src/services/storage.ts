@@ -241,7 +241,7 @@ function mapDbToWithdrawal(w: any): WithdrawalRequest {
     userName: w.user_name || w.userName || 'User',
     userEmail: w.user_email || w.userEmail || '',
     amount: Number(w.amount || 0),
-    method: w.method || 'Bank Transfer',
+    method: w.method || 'Commercial Bank of Ethiopia (CBE)',
     accountInfo: w.account_info || w.accountInfo || '',
     accountName: w.account_name || w.accountName || undefined,
     status: w.status || 'Pending',
