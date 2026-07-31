@@ -591,7 +591,11 @@ export function getCurrentUser(): User | null {
 }
 
 export function setCurrentUser(user: User | null): void {
-  setItem(KEYS.CURRENT_USER, user);
+  if (user === null) {
+    logoutUser();
+  } else {
+    setItem(KEYS.CURRENT_USER, user);
+  }
 }
 
 export function logoutUser(): void {
@@ -687,56 +691,52 @@ export async function registerUserAsync(userData: {
   password?: string;
   referralCode?: string;
 }): Promise<{ success: boolean; message: string; user?: User }> {
-  const users = getUsers();
-
   if (userData.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()) {
     return { success: false, message: 'This email address is reserved for system administration.' };
   }
-  
-  const existingEmail = users.find((u) => u.email.toLowerCase() === userData.email.toLowerCase());
-  if (existingEmail) {
-    return { success: false, message: 'A user with this email address already exists.' };
+
+  if (!userData.password || userData.password.length < 6) {
+    return { success: false, message: 'Password must be at least 6 characters long.' };
   }
+
+  const users = getUsers();
 
   const existingUsername = users.find((u) => u.username.toLowerCase() === userData.username.toLowerCase());
   if (existingUsername) {
     return { success: false, message: 'This username is already taken. Please choose another.' };
   }
 
-  // Supabase Auth Sign Up
-  let authUserId = 'user-' + Date.now();
-  if (userData.password) {
-    try {
-      const { data: authData, error: authErr } = await supabase.auth.signUp({
-        email: userData.email,
-        password: userData.password,
-        options: {
-          data: {
-            full_name: userData.fullName,
-            username: userData.username,
-          },
-        },
-      });
+  // 1. Supabase Auth Sign Up (Creates a real Auth user)
+  const { data: authData, error: authErr } = await supabase.auth.signUp({
+    email: userData.email.trim(),
+    password: userData.password,
+    options: {
+      data: {
+        full_name: userData.fullName,
+        username: userData.username,
+        phone: userData.phone,
+      },
+    },
+  });
 
-      if (authErr) {
-        console.warn('Supabase Auth warning:', authErr.message);
-      } else if (authData?.user) {
-        authUserId = authData.user.id;
-      }
-    } catch (authException) {
-      console.warn('Supabase Auth exception:', authException);
-    }
+  if (authErr) {
+    return { success: false, message: authErr.message || 'Registration failed in Supabase Auth.' };
   }
 
+  if (!authData?.user) {
+    return { success: false, message: 'Failed to create account in authentication service.' };
+  }
+
+  // Auth user UUID
+  const authUserId = authData.user.id;
   const refCode = 'ZEL-' + Math.floor(10000 + Math.random() * 90000);
 
   const newUser: User = {
     id: authUserId,
     fullName: userData.fullName,
     username: userData.username,
-    email: userData.email,
+    email: userData.email.trim(),
     phone: userData.phone,
-    password: userData.password,
     role: 'user',
     referralCode: refCode,
     referredBy: userData.referralCode || undefined,
@@ -746,25 +746,38 @@ export async function registerUserAsync(userData: {
     referralEarnings: 0,
     activePlansCount: 0,
     createdAt: new Date().toISOString(),
+    isBanned: false,
   };
 
-  users.push(newUser);
-  setItem(KEYS.USERS, users);
-
-  // Push profile & wallet to Supabase
-  try {
-    await supabase.from('profiles').insert(mapUserToProfile(newUser));
-    await supabase.from('wallets').insert({
-      id: 'wallet-' + newUser.id,
-      user_id: newUser.id,
-      balance: 0,
-      total_deposits: 0,
-      total_withdrawals: 0,
-      referral_earnings: 0,
-    });
-  } catch (dbErr) {
-    console.warn('Supabase profile creation fallback:', dbErr);
+  // 2. Insert user profile into profiles table using Auth user's UUID
+  const profileData = mapUserToProfile(newUser);
+  const { error: profileErr } = await supabase.from('profiles').upsert(profileData);
+  if (profileErr) {
+    console.warn('Supabase profile insertion error:', profileErr.message);
   }
+
+  // 3. Insert initial wallet for user
+  const { error: walletErr } = await supabase.from('wallets').upsert({
+    id: 'wallet-' + newUser.id,
+    user_id: newUser.id,
+    balance: 0,
+    total_deposits: 0,
+    total_withdrawals: 0,
+    referral_earnings: 0,
+  });
+  if (walletErr) {
+    console.warn('Supabase wallet insertion error:', walletErr.message);
+  }
+
+  // Update local cache
+  const existingIdx = users.findIndex((u) => u.id === newUser.id || u.email.toLowerCase() === newUser.email.toLowerCase());
+  if (existingIdx !== -1) {
+    users[existingIdx] = newUser;
+  } else {
+    users.push(newUser);
+  }
+  setItem(KEYS.USERS, users);
+  setCurrentUser(newUser);
 
   // Welcome Notification
   addNotification(newUser.id, {
@@ -783,7 +796,6 @@ export async function registerUserAsync(userData: {
         type: 'referral',
       });
 
-      // Track referral relation in Supabase
       safeDb(
         supabase.from('referrals').insert({
           id: 'REF-' + Math.floor(100000 + Math.random() * 900000),
@@ -800,7 +812,7 @@ export async function registerUserAsync(userData: {
   return { success: true, message: 'Registration successful!', user: newUser };
 }
 
-// Synchronous wrapper for registerUser
+// Sync wrapper for registerUser - delegates to registerUserAsync
 export function registerUser(userData: {
   fullName: string;
   username: string;
@@ -809,61 +821,16 @@ export function registerUser(userData: {
   password?: string;
   referralCode?: string;
 }): { success: boolean; message: string; user?: User } {
-  // Fire async processing
   registerUserAsync(userData);
-
-  // Return synchronous result instantly from local cache logic
-  const users = getUsers();
-
-  if (userData.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()) {
-    return { success: false, message: 'This email address is reserved for system administration.' };
-  }
-
-  const existingEmail = users.find((u) => u.email.toLowerCase() === userData.email.toLowerCase());
-  if (existingEmail) {
-    return { success: false, message: 'A user with this email address already exists.' };
-  }
-
-  const existingUsername = users.find((u) => u.username.toLowerCase() === userData.username.toLowerCase());
-  if (existingUsername) {
-    return { success: false, message: 'This username is already taken. Please choose another.' };
-  }
-
-  const refCode = 'ZEL-' + Math.floor(10000 + Math.random() * 90000);
-  const newUser: User = {
-    id: 'user-' + Date.now(),
-    fullName: userData.fullName,
-    username: userData.username,
-    email: userData.email,
-    phone: userData.phone,
-    password: userData.password,
-    role: 'user',
-    referralCode: refCode,
-    referredBy: userData.referralCode || undefined,
-    balance: 0,
-    totalDeposits: 0,
-    totalWithdrawals: 0,
-    referralEarnings: 0,
-    activePlansCount: 0,
-    createdAt: new Date().toISOString(),
-  };
-
-  users.push(newUser);
-  setItem(KEYS.USERS, users);
-  return { success: true, message: 'Registration successful!', user: newUser };
+  return { success: true, message: 'Registration initiated.' };
 }
 
 // Login via Supabase Auth + Profiles
 export async function loginUserAsync(loginInput: string, passwordInput: string): Promise<{ success: boolean; message: string; user?: User }> {
-  const users = getUsers();
-  let user = users.find(
-    (u) =>
-      u.email.toLowerCase() === loginInput.trim().toLowerCase() ||
-      u.username.toLowerCase() === loginInput.trim().toLowerCase()
-  );
+  const trimmedInput = loginInput.trim();
 
   // Super Admin bypass
-  if (loginInput.trim().toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()) {
+  if (trimmedInput.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()) {
     if (passwordInput === SUPER_ADMIN_PASS) {
       const superAdmin = ensureSuperAdminExists();
       setCurrentUser(superAdmin);
@@ -873,38 +840,89 @@ export async function loginUserAsync(loginInput: string, passwordInput: string):
     }
   }
 
-  // Attempt Supabase Auth Login
-  try {
-    const emailToUse = user ? user.email : loginInput;
-    const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({
-      email: emailToUse,
-      password: passwordInput,
-    });
-
-    if (!authErr && authData?.user) {
-      // Fetch fresh profile from Supabase
-      const { data: profile } = await supabase.from('profiles').select('*').eq('id', authData.user.id).single();
-      if (profile) {
-        user = mapProfileToUser(profile);
+  // Resolve target email if user provided username instead of email
+  let targetEmail = trimmedInput;
+  if (!targetEmail.includes('@')) {
+    const users = getUsers();
+    const cached = users.find((u) => u.username.toLowerCase() === targetEmail.toLowerCase());
+    if (cached && cached.email) {
+      targetEmail = cached.email;
+    } else {
+      const { data: profileByUsername } = await supabase
+        .from('profiles')
+        .select('email')
+        .eq('username', targetEmail.toLowerCase())
+        .maybeSingle();
+      if (profileByUsername?.email) {
+        targetEmail = profileByUsername.email;
       }
     }
-  } catch (err) {
-    console.warn('Supabase Auth sign-in warning:', err);
   }
 
-  if (!user) {
-    return { success: false, message: 'No account found matching this email or username.' };
+  // 1. Authenticate with Supabase Auth using signInWithPassword
+  const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({
+    email: targetEmail,
+    password: passwordInput,
+  });
+
+  if (authErr) {
+    return { success: false, message: authErr.message || 'Invalid email or password.' };
   }
 
-  if (user.password && user.password !== passwordInput) {
-    return { success: false, message: 'Incorrect password. Please check your credentials and try again.' };
+  if (!authData?.user) {
+    return { success: false, message: 'Authentication failed. Please check your credentials.' };
+  }
+
+  const authUserId = authData.user.id;
+
+  // 2. Fetch user profile from Supabase profiles table using the Auth UUID
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', authUserId)
+    .maybeSingle();
+
+  let user: User;
+  if (profile) {
+    user = mapProfileToUser(profile);
+  } else {
+    // Fallback profile creation if profile record missing
+    const meta = authData.user.user_metadata || {};
+    user = {
+      id: authUserId,
+      fullName: meta.full_name || authData.user.email?.split('@')[0] || 'User',
+      username: meta.username || authData.user.email?.split('@')[0] || 'user',
+      email: authData.user.email || targetEmail,
+      phone: meta.phone || '',
+      role: 'user',
+      referralCode: 'ZEL-' + Math.floor(10000 + Math.random() * 90000),
+      balance: 0,
+      totalDeposits: 0,
+      totalWithdrawals: 0,
+      referralEarnings: 0,
+      activePlansCount: 0,
+      createdAt: authData.user.created_at || new Date().toISOString(),
+      isBanned: false,
+    };
+    await supabase.from('profiles').upsert(mapUserToProfile(user));
   }
 
   if (user.isBanned) {
+    await supabase.auth.signOut();
     return { success: false, message: 'This account has been restricted. Please contact support.' };
   }
 
+  // Sync to local cache
+  const users = getUsers();
+  const idx = users.findIndex((u) => u.id === user.id || u.email.toLowerCase() === user.email.toLowerCase());
+  if (idx !== -1) {
+    users[idx] = user;
+  } else {
+    users.push(user);
+  }
+  setItem(KEYS.USERS, users);
   setCurrentUser(user);
+
   return { success: true, message: 'Login successful!', user };
 }
 
