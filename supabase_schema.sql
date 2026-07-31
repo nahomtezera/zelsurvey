@@ -100,11 +100,11 @@ CREATE TABLE IF NOT EXISTS public.notifications (
 -- 8. ADMIN SETTINGS TABLE
 CREATE TABLE IF NOT EXISTS public.admin_settings (
   id TEXT PRIMARY KEY DEFAULT 'default_settings',
-  bank_name TEXT NOT NULL DEFAULT 'Official Bank Account',
-  account_name TEXT NOT NULL DEFAULT 'ZelSurvey Automated Systems',
-  account_number TEXT NOT NULL DEFAULT '1000 0000 0000',
-  swift_code TEXT DEFAULT 'BANKETAA',
-  instructions TEXT NOT NULL DEFAULT 'Transfer the exact deposit amount to the official bank account above, capture your deposit receipt or screenshot, and upload it for instant admin verification.',
+  bank_name TEXT NOT NULL DEFAULT 'Bank of Abyssinia',
+  account_name TEXT NOT NULL DEFAULT 'Dagmawit Dinku Asefa',
+  account_number TEXT NOT NULL DEFAULT '253267658',
+  swift_code TEXT DEFAULT 'ABYSETAA',
+  instructions TEXT NOT NULL DEFAULT 'Transfer the exact deposit amount to the official Bank of Abyssinia account above, capture your deposit receipt or screenshot, and upload it for instant admin verification.',
   min_withdrawal_amount NUMERIC(15, 2) NOT NULL DEFAULT 5000.00,
   referral_commission_percent NUMERIC(5, 2) NOT NULL DEFAULT 5.00
 );

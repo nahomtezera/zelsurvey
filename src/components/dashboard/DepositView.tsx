@@ -16,7 +16,7 @@ import {
   Info,
   Sparkles
 } from 'lucide-react';
-import { COMPANY_BANK_ACCOUNT, createDepositRequest, getUserDeposits } from '../../services/storage';
+import { COMPANY_BANK_ACCOUNT, createDepositRequest, getUserDeposits, getPlatformSettings } from '../../services/storage';
 import { User, DepositRequest } from '../../types';
 
 interface DepositViewProps {
@@ -26,9 +26,16 @@ interface DepositViewProps {
 }
 
 export const DepositView: React.FC<DepositViewProps> = ({ user, onDepositCreated, showToast }) => {
+  const platformSettings = getPlatformSettings();
+  const bankAccount = {
+    bankName: platformSettings.bankName || COMPANY_BANK_ACCOUNT.bankName,
+    accountName: platformSettings.accountName || COMPANY_BANK_ACCOUNT.accountName,
+    accountNumber: platformSettings.accountNumber || COMPANY_BANK_ACCOUNT.accountNumber,
+  };
+
   const [copiedAccount, setCopiedAccount] = useState(false);
   const [amount, setAmount] = useState<string>('1000');
-  const [bankUsed, setBankUsed] = useState<string>('Bank Transfer');
+  const [bankUsed, setBankUsed] = useState<string>('Bank of Abyssinia');
   const [transactionRef, setTransactionRef] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
   
@@ -46,9 +53,9 @@ export const DepositView: React.FC<DepositViewProps> = ({ user, onDepositCreated
   const deposits = getUserDeposits(user.id);
 
   const handleCopyAccount = () => {
-    navigator.clipboard.writeText(COMPANY_BANK_ACCOUNT.accountNumber);
+    navigator.clipboard.writeText(bankAccount.accountNumber);
     setCopiedAccount(true);
-    showToast('success', 'Account Number Copied!', `Copied ${COMPANY_BANK_ACCOUNT.accountNumber} to clipboard.`);
+    showToast('success', 'Account Number Copied!', `Copied ${bankAccount.accountNumber} to clipboard.`);
     setTimeout(() => setCopiedAccount(false), 3000);
   };
 
@@ -185,19 +192,19 @@ export const DepositView: React.FC<DepositViewProps> = ({ user, onDepositCreated
 
             <div>
               <p className="text-xs text-slate-400 uppercase tracking-widest font-semibold">Bank Name</p>
-              <h3 className="text-lg sm:text-2xl font-black text-white break-words">{COMPANY_BANK_ACCOUNT.bankName}</h3>
+              <h3 className="text-lg sm:text-2xl font-black text-white break-words">{bankAccount.bankName}</h3>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
               <div>
                 <p className="text-[11px] text-slate-400 uppercase tracking-wider">Account Holder Name</p>
-                <p className="text-xs sm:text-sm font-bold text-slate-200 break-words">{COMPANY_BANK_ACCOUNT.accountName}</p>
+                <p className="text-xs sm:text-sm font-bold text-slate-200 break-words">{bankAccount.accountName}</p>
               </div>
 
               <div>
                 <p className="text-[11px] text-slate-400 uppercase tracking-wider">Account Number</p>
                 <p className="text-base sm:text-lg font-black font-mono text-blue-300 tracking-wider break-all">
-                  {COMPANY_BANK_ACCOUNT.accountNumber}
+                  {bankAccount.accountNumber}
                 </p>
               </div>
             </div>

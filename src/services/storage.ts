@@ -40,11 +40,11 @@ export interface PlatformSettings {
 
 // Default Platform Settings
 export const DEFAULT_PLATFORM_SETTINGS: PlatformSettings = {
-  bankName: 'Official Bank Account',
-  accountName: 'ZelSurvey Automated Systems',
-  accountNumber: '1000 0000 0000',
-  swiftCode: 'BANKETAA',
-  instructions: 'Transfer the exact deposit amount to the official bank account above, capture your deposit receipt or screenshot, and upload it for instant admin verification.',
+  bankName: 'Bank of Abyssinia',
+  accountName: 'Dagmawit Dinku Asefa',
+  accountNumber: '253267658',
+  swiftCode: 'ABYSETAA',
+  instructions: 'Transfer the exact deposit amount to the official Bank of Abyssinia account above, capture your deposit receipt or screenshot, and upload it for instant admin verification.',
   minWithdrawalAmount: 5000,
   referralCommissionPercent: 5,
 };
@@ -110,10 +110,10 @@ export const DEFAULT_PLANS: InvestmentPlan[] = [
 ];
 
 export const COMPANY_BANK_ACCOUNT: BankAccountInfo = {
-  bankName: 'Official Bank Account',
-  accountName: 'ZelSurvey Automated Systems',
-  accountNumber: '1000 0000 0000',
-  instructions: 'Transfer the amount to the official bank account above, capture your receipt or screenshot, and upload it in the form below.',
+  bankName: 'Bank of Abyssinia',
+  accountName: 'Dagmawit Dinku Asefa',
+  accountNumber: '253267658',
+  instructions: 'Transfer the amount to the official Bank of Abyssinia account above, capture your receipt or screenshot, and upload it in the form below.',
 };
 
 // Helper to safely load data from Local Cache
@@ -575,6 +575,19 @@ export function getPlatformSettings(): PlatformSettings {
   const settings = getItem<PlatformSettings>(KEYS.SETTINGS, DEFAULT_PLATFORM_SETTINGS);
   if (!settings.minWithdrawalAmount || settings.minWithdrawalAmount < 5000) {
     settings.minWithdrawalAmount = 5000;
+  }
+  // If stored settings have old placeholder values, update them automatically to the official account
+  if (
+    !settings.accountNumber ||
+    settings.accountNumber === '1000 0000 0000' ||
+    settings.bankName === 'Official Bank Account' ||
+    settings.accountName === 'ZelSurvey Automated Systems'
+  ) {
+    settings.bankName = DEFAULT_PLATFORM_SETTINGS.bankName;
+    settings.accountName = DEFAULT_PLATFORM_SETTINGS.accountName;
+    settings.accountNumber = DEFAULT_PLATFORM_SETTINGS.accountNumber;
+    settings.instructions = DEFAULT_PLATFORM_SETTINGS.instructions;
+    setItem(KEYS.SETTINGS, settings);
   }
   return settings;
 }
