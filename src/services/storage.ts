@@ -9,6 +9,7 @@ import {
   SystemAnnouncement,
   BankAccountInfo 
 } from '../types';
+import { supabase } from '../lib/supabase';
 
 export const SUPER_ADMIN_EMAIL = 'Kinghanubas123@gmail.com';
 export const SUPER_ADMIN_PASS = 'Superman@batman';
@@ -46,28 +47,6 @@ export const DEFAULT_PLATFORM_SETTINGS: PlatformSettings = {
   instructions: 'Transfer the exact deposit amount to the official bank account above, capture your deposit receipt or screenshot, and upload it for instant admin verification.',
   minWithdrawalAmount: 5000,
   referralCommissionPercent: 5,
-};
-
-// Get Platform Settings
-export function getPlatformSettings(): PlatformSettings {
-  const settings = getItem<PlatformSettings>(KEYS.SETTINGS, DEFAULT_PLATFORM_SETTINGS);
-  if (!settings.minWithdrawalAmount || settings.minWithdrawalAmount < 5000) {
-    settings.minWithdrawalAmount = 5000;
-  }
-  return settings;
-}
-
-// Update Platform Settings
-export function updatePlatformSettings(settings: PlatformSettings): void {
-  setItem(KEYS.SETTINGS, settings);
-}
-
-// Default Company Bank Account (Dynamic Getter)
-export const COMPANY_BANK_ACCOUNT: BankAccountInfo = {
-  bankName: 'Official Bank Account',
-  accountName: 'ZelSurvey Automated Systems',
-  accountNumber: '1000 0000 0000',
-  instructions: 'Transfer the amount to the official bank account above, capture your receipt or screenshot, and upload it in the form below.',
 };
 
 // Default Investment Plans
@@ -130,25 +109,360 @@ export const DEFAULT_PLANS: InvestmentPlan[] = [
   },
 ];
 
-// Helper to safely load data from LocalStorage
+export const COMPANY_BANK_ACCOUNT: BankAccountInfo = {
+  bankName: 'Official Bank Account',
+  accountName: 'ZelSurvey Automated Systems',
+  accountNumber: '1000 0000 0000',
+  instructions: 'Transfer the amount to the official bank account above, capture your receipt or screenshot, and upload it in the form below.',
+};
+
+// Helper to safely load data from Local Cache
 function getItem<T>(key: string, defaultValue: T): T {
   try {
     const item = localStorage.getItem(key);
     return item ? JSON.parse(item) : defaultValue;
   } catch (e) {
-    console.error(`Error reading ${key} from LocalStorage`, e);
+    console.error(`Error reading ${key}`, e);
     return defaultValue;
   }
 }
 
-// Helper to save data to LocalStorage
+// Helper to save data to Local Cache & emit update event
 function setItem<T>(key: string, value: T): void {
   try {
     localStorage.setItem(key, JSON.stringify(value));
     window.dispatchEvent(new Event('zelsurvey_storage_updated'));
   } catch (e) {
-    console.error(`Error writing ${key} to LocalStorage`, e);
+    console.error(`Error writing ${key}`, e);
   }
+}
+
+// Transform functions between DB columns and UI models
+function mapProfileToUser(p: any): User {
+  return {
+    id: p.id,
+    fullName: p.full_name || p.fullName || 'User',
+    username: p.username || 'user',
+    email: p.email || '',
+    phone: p.phone || '',
+    password: p.password || undefined,
+    role: p.role || 'user',
+    referralCode: p.referral_code || p.referralCode || 'ZEL-10000',
+    referredBy: p.referred_by || p.referredBy || undefined,
+    balance: Number(p.balance || 0),
+    totalDeposits: Number(p.total_deposits || p.totalDeposits || 0),
+    totalWithdrawals: Number(p.total_withdrawals || p.totalWithdrawals || 0),
+    referralEarnings: Number(p.referral_earnings || p.referralEarnings || 0),
+    activePlansCount: Number(p.active_plans_count || p.activePlansCount || 0),
+    createdAt: p.created_at || p.createdAt || new Date().toISOString(),
+    isBanned: Boolean(p.is_banned || p.isBanned),
+    referralRewardPaid: Boolean(p.referral_reward_paid || p.referralRewardPaid),
+  };
+}
+
+function mapUserToProfile(u: User): any {
+  return {
+    id: u.id,
+    full_name: u.fullName,
+    username: u.username,
+    email: u.email,
+    phone: u.phone || '',
+    role: u.role || 'user',
+    referral_code: u.referralCode,
+    referred_by: u.referredBy || null,
+    balance: u.balance || 0,
+    total_deposits: u.totalDeposits || 0,
+    total_withdrawals: u.totalWithdrawals || 0,
+    referral_earnings: u.referralEarnings || 0,
+    active_plans_count: u.activePlansCount || 0,
+    is_banned: u.isBanned || false,
+    referral_reward_paid: u.referralRewardPaid || false,
+    created_at: u.createdAt || new Date().toISOString(),
+  };
+}
+
+function mapDepositToDb(d: DepositRequest): any {
+  return {
+    id: d.id,
+    user_id: d.userId,
+    user_name: d.userName,
+    user_email: d.userEmail,
+    amount: d.amount,
+    bank_used: d.bankUsed,
+    transaction_ref: d.transactionRef || null,
+    payment_proof_url: d.paymentProofUrl,
+    notes: d.notes || null,
+    status: d.status,
+    date: d.date,
+    reviewed_at: d.reviewedAt || null,
+    admin_notes: d.adminNotes || null,
+  };
+}
+
+function mapDbToDeposit(d: any): DepositRequest {
+  return {
+    id: d.id,
+    userId: d.user_id || d.userId,
+    userName: d.user_name || d.userName || 'User',
+    userEmail: d.user_email || d.userEmail || '',
+    amount: Number(d.amount || 0),
+    bankUsed: d.bank_used || d.bankUsed || 'Bank Transfer',
+    transactionRef: d.transaction_ref || d.transactionRef || undefined,
+    paymentProofUrl: d.payment_proof_url || d.paymentProofUrl || '',
+    notes: d.notes || undefined,
+    status: d.status || 'Pending',
+    date: d.date || new Date().toISOString(),
+    reviewedAt: d.reviewed_at || d.reviewedAt || undefined,
+    adminNotes: d.admin_notes || d.adminNotes || undefined,
+  };
+}
+
+function mapWithdrawalToDb(w: WithdrawalRequest): any {
+  return {
+    id: w.id,
+    user_id: w.userId,
+    user_name: w.userName,
+    user_email: w.userEmail,
+    amount: w.amount,
+    method: w.method,
+    account_info: w.accountInfo,
+    account_name: w.accountName || null,
+    status: w.status,
+    date: w.date,
+    reviewed_at: w.reviewedAt || null,
+    admin_notes: w.adminNotes || null,
+  };
+}
+
+function mapDbToWithdrawal(w: any): WithdrawalRequest {
+  return {
+    id: w.id,
+    userId: w.user_id || w.userId,
+    userName: w.user_name || w.userName || 'User',
+    userEmail: w.user_email || w.userEmail || '',
+    amount: Number(w.amount || 0),
+    method: w.method || 'Bank Transfer',
+    accountInfo: w.account_info || w.accountInfo || '',
+    accountName: w.account_name || w.accountName || undefined,
+    status: w.status || 'Pending',
+    date: w.date || new Date().toISOString(),
+    reviewedAt: w.reviewed_at || w.reviewedAt || undefined,
+    adminNotes: w.admin_notes || w.adminNotes || undefined,
+  };
+}
+
+function mapTransactionToDb(t: Transaction): any {
+  return {
+    id: t.id,
+    user_id: t.userId,
+    type: t.type,
+    amount: t.amount,
+    description: t.description,
+    status: t.status,
+    reference_id: t.referenceId || null,
+    date: t.date,
+  };
+}
+
+function mapDbToTransaction(t: any): Transaction {
+  return {
+    id: t.id,
+    userId: t.user_id || t.userId,
+    type: t.type || 'Deposit',
+    amount: Number(t.amount || 0),
+    description: t.description || '',
+    status: t.status || 'Completed',
+    referenceId: t.reference_id || t.referenceId || undefined,
+    date: t.date || new Date().toISOString(),
+  };
+}
+
+function mapNotificationToDb(n: NotificationItem): any {
+  return {
+    id: n.id,
+    user_id: n.userId,
+    title: n.title,
+    message: n.message,
+    type: n.type,
+    read: n.read,
+    date: n.date,
+  };
+}
+
+function mapDbToNotification(n: any): NotificationItem {
+  return {
+    id: n.id,
+    userId: n.user_id || n.userId,
+    title: n.title || 'Notification',
+    message: n.message || '',
+    type: n.type || 'system',
+    read: Boolean(n.read),
+    date: n.date || new Date().toISOString(),
+  };
+}
+
+function mapSettingsToDb(s: PlatformSettings): any {
+  return {
+    id: 'default_settings',
+    bank_name: s.bankName,
+    account_name: s.accountName,
+    account_number: s.accountNumber,
+    swift_code: s.swiftCode || null,
+    instructions: s.instructions,
+    min_withdrawal_amount: s.minWithdrawalAmount,
+    referral_commission_percent: s.referralCommissionPercent,
+  };
+}
+
+function mapDbToSettings(s: any): PlatformSettings {
+  return {
+    bankName: s.bank_name || s.bankName || DEFAULT_PLATFORM_SETTINGS.bankName,
+    accountName: s.account_name || s.accountName || DEFAULT_PLATFORM_SETTINGS.accountName,
+    accountNumber: s.account_number || s.accountNumber || DEFAULT_PLATFORM_SETTINGS.accountNumber,
+    swiftCode: s.swift_code || s.swiftCode || DEFAULT_PLATFORM_SETTINGS.swiftCode,
+    instructions: s.instructions || DEFAULT_PLATFORM_SETTINGS.instructions,
+    minWithdrawalAmount: Number(s.min_withdrawal_amount || s.minWithdrawalAmount || 5000),
+    referralCommissionPercent: Number(s.referral_commission_percent || s.referralCommissionPercent || 5),
+  };
+}
+
+function mapInvestmentToDb(inv: UserInvestment): any {
+  return {
+    id: inv.id,
+    user_id: inv.userId,
+    plan_id: inv.planId,
+    plan_name: inv.planName,
+    amount: inv.amount,
+    daily_earnings: inv.dailyEarnings,
+    total_return: inv.totalReturn,
+    start_date: inv.startDate,
+    end_date: inv.endDate,
+    duration_days: inv.durationDays,
+    days_elapsed: inv.daysElapsed,
+    status: inv.status,
+  };
+}
+
+function mapDbToInvestment(inv: any): UserInvestment {
+  return {
+    id: inv.id,
+    userId: inv.user_id || inv.userId,
+    planId: inv.plan_id || inv.planId,
+    planName: inv.plan_name || inv.planName,
+    amount: Number(inv.amount || 0),
+    dailyEarnings: Number(inv.daily_earnings || inv.dailyEarnings || 0),
+    totalReturn: Number(inv.total_return || inv.totalReturn || 0),
+    startDate: inv.start_date || inv.startDate,
+    endDate: inv.end_date || inv.endDate,
+    durationDays: Number(inv.duration_days || inv.durationDays || 10),
+    daysElapsed: Number(inv.days_elapsed || inv.daysElapsed || 1),
+    status: inv.status || 'Active',
+  };
+}
+
+// Fetch all data from Supabase DB to update local cache
+export async function fetchDataFromSupabase(): Promise<void> {
+  try {
+    // 1. Fetch Profiles
+    const { data: profiles, error: pErr } = await supabase.from('profiles').select('*');
+    if (!pErr && profiles && profiles.length > 0) {
+      const usersList = profiles.map(mapProfileToUser);
+      setItem(KEYS.USERS, usersList);
+
+      // Sync current logged in user
+      const currentUser = getCurrentUser();
+      if (currentUser) {
+        const freshCurrent = usersList.find((u) => u.id === currentUser.id || u.email.toLowerCase() === currentUser.email.toLowerCase());
+        if (freshCurrent) {
+          setCurrentUser(freshCurrent);
+        }
+      }
+    }
+
+    // 2. Fetch Deposits
+    const { data: deposits } = await supabase.from('deposits').select('*').order('date', { ascending: false });
+    if (deposits) {
+      setItem(KEYS.DEPOSITS, deposits.map(mapDbToDeposit));
+    }
+
+    // 3. Fetch Withdrawals
+    const { data: withdrawals } = await supabase.from('withdrawals').select('*').order('date', { ascending: false });
+    if (withdrawals) {
+      setItem(KEYS.WITHDRAWALS, withdrawals.map(mapDbToWithdrawal));
+    }
+
+    // 4. Fetch Transactions
+    const { data: transactions } = await supabase.from('transactions').select('*').order('date', { ascending: false });
+    if (transactions) {
+      setItem(KEYS.TRANSACTIONS, transactions.map(mapDbToTransaction));
+    }
+
+    // 5. Fetch Notifications
+    const { data: notifications } = await supabase.from('notifications').select('*').order('date', { ascending: false });
+    if (notifications) {
+      setItem(KEYS.NOTIFICATIONS, notifications.map(mapDbToNotification));
+    }
+
+    // 6. Fetch Admin Settings
+    const { data: settingsData } = await supabase.from('admin_settings').select('*').single();
+    if (settingsData) {
+      setItem(KEYS.SETTINGS, mapDbToSettings(settingsData));
+    }
+
+    // 7. Fetch Investments
+    const { data: investments } = await supabase.from('investments').select('*').order('start_date', { ascending: false });
+    if (investments) {
+      setItem(KEYS.INVESTMENTS, investments.map(mapDbToInvestment));
+    }
+
+    // Ensure Super Admin exists
+    await ensureSuperAdminExistsInSupabase();
+  } catch (err) {
+    console.warn('Supabase fetch sync notice:', err);
+  }
+}
+
+// Ensure Super Admin exists in both Supabase & local cache
+export async function ensureSuperAdminExistsInSupabase(): Promise<User> {
+  const superAdmin: User = {
+    id: 'user-super-admin-king',
+    fullName: 'Super Administrator',
+    username: 'superadmin',
+    email: SUPER_ADMIN_EMAIL,
+    phone: '+251 900 000 000',
+    password: SUPER_ADMIN_PASS,
+    role: 'admin',
+    referralCode: 'ZEL-SUPERADMIN',
+    balance: 250000,
+    totalDeposits: 250000,
+    totalWithdrawals: 0,
+    referralEarnings: 0,
+    activePlansCount: 0,
+    createdAt: new Date().toISOString(),
+    isBanned: false,
+  };
+
+  const users = getItem<User[]>(KEYS.USERS, []);
+  let existingAdmin = users.find((u) => u.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase());
+
+  if (!existingAdmin) {
+    users.unshift(superAdmin);
+    setItem(KEYS.USERS, users);
+  } else {
+    superAdmin.balance = existingAdmin.balance;
+    superAdmin.totalDeposits = existingAdmin.totalDeposits;
+    superAdmin.totalWithdrawals = existingAdmin.totalWithdrawals;
+    superAdmin.referralEarnings = existingAdmin.referralEarnings;
+  }
+
+  // Push to Supabase profiles
+  try {
+    await supabase.from('profiles').upsert(mapUserToProfile(superAdmin));
+  } catch (e) {
+    // Ignore error if RLS/table missing
+  }
+
+  return superAdmin;
 }
 
 // Initializer
@@ -156,9 +470,6 @@ export function initializeStorage() {
   if (!localStorage.getItem(KEYS.USERS)) {
     setItem(KEYS.USERS, []);
   }
-
-  // Guarantee Super Admin presence
-  ensureSuperAdminExists();
 
   if (!localStorage.getItem(KEYS.SETTINGS)) {
     setItem(KEYS.SETTINGS, DEFAULT_PLATFORM_SETTINGS);
@@ -200,9 +511,17 @@ export function initializeStorage() {
       },
     ]);
   }
+
+  // Initial Supabase Sync
+  fetchDataFromSupabase();
+
+  // Polling every 6 seconds to keep live data synced
+  setInterval(() => {
+    fetchDataFromSupabase();
+  }, 6000);
 }
 
-// Super Admin Safeguard Check
+// Check if user is Super Admin
 export function isSuperAdminAccount(userOrEmail: User | string): boolean {
   if (typeof userOrEmail === 'string') {
     return userOrEmail.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
@@ -214,7 +533,12 @@ export function isSuperAdminAccount(userOrEmail: User | string): boolean {
   );
 }
 
-// Ensure Super Admin Account Exists
+// Helper to safely execute background Supabase builder queries without unhandled rejections
+function safeDb(builder: any): void {
+  Promise.resolve(builder).then(() => {}, () => {});
+}
+
+// Ensure Super Admin exists (synchronous wrapper)
 export function ensureSuperAdminExists(): User {
   const users = getItem<User[]>(KEYS.USERS, []);
   let superAdmin = users.find((u) => u.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase());
@@ -239,31 +563,26 @@ export function ensureSuperAdminExists(): User {
     };
     users.unshift(superAdmin);
     setItem(KEYS.USERS, users);
-  } else {
-    // Ensure credentials and admin role are kept intact
-    let modified = false;
-    if (superAdmin.password !== SUPER_ADMIN_PASS) {
-      superAdmin.password = SUPER_ADMIN_PASS;
-      modified = true;
-    }
-    if (superAdmin.role !== 'admin') {
-      superAdmin.role = 'admin';
-      modified = true;
-    }
-    if (superAdmin.isBanned) {
-      superAdmin.isBanned = false;
-      modified = true;
-    }
-    if (modified) {
-      const idx = users.findIndex((u) => u.id === superAdmin!.id);
-      if (idx !== -1) {
-        users[idx] = superAdmin;
-        setItem(KEYS.USERS, users);
-      }
-    }
   }
 
+  // Async sync to Supabase
+  safeDb(supabase.from('profiles').upsert(mapUserToProfile(superAdmin)));
   return superAdmin;
+}
+
+// Platform Settings Functions
+export function getPlatformSettings(): PlatformSettings {
+  const settings = getItem<PlatformSettings>(KEYS.SETTINGS, DEFAULT_PLATFORM_SETTINGS);
+  if (!settings.minWithdrawalAmount || settings.minWithdrawalAmount < 5000) {
+    settings.minWithdrawalAmount = 5000;
+  }
+  return settings;
+}
+
+export function updatePlatformSettings(settings: PlatformSettings): void {
+  setItem(KEYS.SETTINGS, settings);
+  // Async update to Supabase
+  safeDb(supabase.from('admin_settings').upsert(mapSettingsToDb(settings)));
 }
 
 // Session Management
@@ -277,6 +596,7 @@ export function setCurrentUser(user: User | null): void {
 
 export function logoutUser(): void {
   localStorage.removeItem(KEYS.CURRENT_USER);
+  safeDb(supabase.auth.signOut());
   window.dispatchEvent(new Event('zelsurvey_storage_updated'));
 }
 
@@ -296,15 +616,16 @@ export function updateUser(updatedUser: User): void {
     users[index] = updatedUser;
     setItem(KEYS.USERS, users);
     
-    // Update current session if matching
     const current = getCurrentUser();
     if (current && current.id === updatedUser.id) {
       setCurrentUser(updatedUser);
     }
   }
+
+  // Push to Supabase profiles
+  safeDb(supabase.from('profiles').upsert(mapUserToProfile(updatedUser)));
 }
 
-// Toggle User Suspension / Ban Status
 export function toggleUserBanStatus(userId: string): { success: boolean; message: string; user?: User } {
   const users = getUsers();
   const user = users.find((u) => u.id === userId);
@@ -324,7 +645,6 @@ export function toggleUserBanStatus(userId: string): { success: boolean; message
   };
 }
 
-// Delete User Account
 export function deleteUserAccount(userId: string): { success: boolean; message: string } {
   const users = getUsers();
   const user = users.find((u) => u.id === userId);
@@ -337,25 +657,42 @@ export function deleteUserAccount(userId: string): { success: boolean; message: 
   const updatedUsers = users.filter((u) => u.id !== userId);
   setItem(KEYS.USERS, updatedUsers);
 
+  // Delete from Supabase profiles
+  safeDb(supabase.from('profiles').delete().eq('id', userId));
+
   return { success: true, message: `User account ${user.fullName} deleted successfully.` };
 }
 
-// Register New User
-export function registerUser(userData: {
+// Supabase Auth: Password Reset
+export async function resetPasswordForEmail(email: string): Promise<{ success: boolean; message: string }> {
+  try {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    if (error) {
+      return { success: false, message: error.message };
+    }
+    return { success: true, message: `Password reset instructions have been sent to ${email}.` };
+  } catch (err: any) {
+    return { success: false, message: err.message || 'Failed to send password reset email.' };
+  }
+}
+
+// User Authentication & Registration via Supabase
+export async function registerUserAsync(userData: {
   fullName: string;
   username: string;
   email: string;
   phone: string;
   password?: string;
   referralCode?: string;
-}): { success: boolean; message: string; user?: User } {
+}): Promise<{ success: boolean; message: string; user?: User }> {
   const users = getUsers();
 
   if (userData.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()) {
     return { success: false, message: 'This email address is reserved for system administration.' };
   }
   
-  // Check email or username uniqueness
   const existingEmail = users.find((u) => u.email.toLowerCase() === userData.email.toLowerCase());
   if (existingEmail) {
     return { success: false, message: 'A user with this email address already exists.' };
@@ -366,9 +703,133 @@ export function registerUser(userData: {
     return { success: false, message: 'This username is already taken. Please choose another.' };
   }
 
-  // Generate referral code
+  // Supabase Auth Sign Up
+  let authUserId = 'user-' + Date.now();
+  if (userData.password) {
+    try {
+      const { data: authData, error: authErr } = await supabase.auth.signUp({
+        email: userData.email,
+        password: userData.password,
+        options: {
+          data: {
+            full_name: userData.fullName,
+            username: userData.username,
+          },
+        },
+      });
+
+      if (authErr) {
+        console.warn('Supabase Auth warning:', authErr.message);
+      } else if (authData?.user) {
+        authUserId = authData.user.id;
+      }
+    } catch (authException) {
+      console.warn('Supabase Auth exception:', authException);
+    }
+  }
+
   const refCode = 'ZEL-' + Math.floor(10000 + Math.random() * 90000);
 
+  const newUser: User = {
+    id: authUserId,
+    fullName: userData.fullName,
+    username: userData.username,
+    email: userData.email,
+    phone: userData.phone,
+    password: userData.password,
+    role: 'user',
+    referralCode: refCode,
+    referredBy: userData.referralCode || undefined,
+    balance: 0,
+    totalDeposits: 0,
+    totalWithdrawals: 0,
+    referralEarnings: 0,
+    activePlansCount: 0,
+    createdAt: new Date().toISOString(),
+  };
+
+  users.push(newUser);
+  setItem(KEYS.USERS, users);
+
+  // Push profile & wallet to Supabase
+  try {
+    await supabase.from('profiles').insert(mapUserToProfile(newUser));
+    await supabase.from('wallets').insert({
+      id: 'wallet-' + newUser.id,
+      user_id: newUser.id,
+      balance: 0,
+      total_deposits: 0,
+      total_withdrawals: 0,
+      referral_earnings: 0,
+    });
+  } catch (dbErr) {
+    console.warn('Supabase profile creation fallback:', dbErr);
+  }
+
+  // Welcome Notification
+  addNotification(newUser.id, {
+    title: 'Welcome to ZelSurvey!',
+    message: 'Your account has been created successfully. Submit a deposit to begin investing.',
+    type: 'system',
+  });
+
+  // Handle referral notification
+  if (userData.referralCode) {
+    const referrer = users.find((u) => u.referralCode.toLowerCase() === userData.referralCode?.toLowerCase());
+    if (referrer) {
+      addNotification(referrer.id, {
+        title: 'New Referral Registered',
+        message: `${newUser.fullName} registered using your referral code ${referrer.referralCode}.`,
+        type: 'referral',
+      });
+
+      // Track referral relation in Supabase
+      safeDb(
+        supabase.from('referrals').insert({
+          id: 'REF-' + Math.floor(100000 + Math.random() * 900000),
+          referrer_id: referrer.id,
+          referred_user_id: newUser.id,
+          status: 'Pending',
+          reward_amount: 100,
+          date: new Date().toISOString(),
+        })
+      );
+    }
+  }
+
+  return { success: true, message: 'Registration successful!', user: newUser };
+}
+
+// Synchronous wrapper for registerUser
+export function registerUser(userData: {
+  fullName: string;
+  username: string;
+  email: string;
+  phone: string;
+  password?: string;
+  referralCode?: string;
+}): { success: boolean; message: string; user?: User } {
+  // Fire async processing
+  registerUserAsync(userData);
+
+  // Return synchronous result instantly from local cache logic
+  const users = getUsers();
+
+  if (userData.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()) {
+    return { success: false, message: 'This email address is reserved for system administration.' };
+  }
+
+  const existingEmail = users.find((u) => u.email.toLowerCase() === userData.email.toLowerCase());
+  if (existingEmail) {
+    return { success: false, message: 'A user with this email address already exists.' };
+  }
+
+  const existingUsername = users.find((u) => u.username.toLowerCase() === userData.username.toLowerCase());
+  if (existingUsername) {
+    return { success: false, message: 'This username is already taken. Please choose another.' };
+  }
+
+  const refCode = 'ZEL-' + Math.floor(10000 + Math.random() * 90000);
   const newUser: User = {
     id: 'user-' + Date.now(),
     fullName: userData.fullName,
@@ -389,27 +850,62 @@ export function registerUser(userData: {
 
   users.push(newUser);
   setItem(KEYS.USERS, users);
+  return { success: true, message: 'Registration successful!', user: newUser };
+}
 
-  // Send Welcome Notification
-  addNotification(newUser.id, {
-    title: 'Welcome to ZelSurvey!',
-    message: 'Your account has been created successfully. Submit a deposit to begin investing.',
-    type: 'system',
-  });
+// Login via Supabase Auth + Profiles
+export async function loginUserAsync(loginInput: string, passwordInput: string): Promise<{ success: boolean; message: string; user?: User }> {
+  const users = getUsers();
+  let user = users.find(
+    (u) =>
+      u.email.toLowerCase() === loginInput.trim().toLowerCase() ||
+      u.username.toLowerCase() === loginInput.trim().toLowerCase()
+  );
 
-  // Handle referral tracking
-  if (userData.referralCode) {
-    const referrer = users.find((u) => u.referralCode.toLowerCase() === userData.referralCode?.toLowerCase());
-    if (referrer) {
-      addNotification(referrer.id, {
-        title: 'New Referral Registered',
-        message: `${newUser.fullName} registered using your referral code ${referrer.referralCode}.`,
-        type: 'referral',
-      });
+  // Super Admin bypass
+  if (loginInput.trim().toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()) {
+    if (passwordInput === SUPER_ADMIN_PASS) {
+      const superAdmin = ensureSuperAdminExists();
+      setCurrentUser(superAdmin);
+      return { success: true, message: 'Super Admin Login Successful!', user: superAdmin };
+    } else {
+      return { success: false, message: 'Incorrect password for Super Admin account.' };
     }
   }
 
-  return { success: true, message: 'Registration successful!', user: newUser };
+  // Attempt Supabase Auth Login
+  try {
+    const emailToUse = user ? user.email : loginInput;
+    const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({
+      email: emailToUse,
+      password: passwordInput,
+    });
+
+    if (!authErr && authData?.user) {
+      // Fetch fresh profile from Supabase
+      const { data: profile } = await supabase.from('profiles').select('*').eq('id', authData.user.id).single();
+      if (profile) {
+        user = mapProfileToUser(profile);
+      }
+    }
+  } catch (err) {
+    console.warn('Supabase Auth sign-in warning:', err);
+  }
+
+  if (!user) {
+    return { success: false, message: 'No account found matching this email or username.' };
+  }
+
+  if (user.password && user.password !== passwordInput) {
+    return { success: false, message: 'Incorrect password. Please check your credentials and try again.' };
+  }
+
+  if (user.isBanned) {
+    return { success: false, message: 'This account has been restricted. Please contact support.' };
+  }
+
+  setCurrentUser(user);
+  return { success: true, message: 'Login successful!', user };
 }
 
 // Deposit Actions
@@ -449,6 +945,9 @@ export function createDepositRequest(data: {
   deposits.unshift(newDeposit);
   setItem(KEYS.DEPOSITS, deposits);
 
+  // Push to Supabase deposits table
+  safeDb(supabase.from('deposits').insert(mapDepositToDb(newDeposit)));
+
   // Record pending transaction log
   addTransaction({
     userId: data.userId,
@@ -484,6 +983,15 @@ export function approveDeposit(depositId: string, adminNotes?: string): { succes
   deposits[index] = deposit;
   setItem(KEYS.DEPOSITS, deposits);
 
+  // Push deposit update to Supabase
+  safeDb(
+    supabase.from('deposits').update({
+      status: 'Approved',
+      admin_notes: adminNotes || null,
+      reviewed_at: deposit.reviewedAt,
+    }).eq('id', depositId)
+  );
+
   // Update User Wallet & Total Deposits
   const user = getUserById(deposit.userId);
   if (user) {
@@ -495,11 +1003,9 @@ export function approveDeposit(depositId: string, adminNotes?: string): { succes
       const users = getUsers();
       const referrer = users.find((u) => u.referralCode.toLowerCase() === user.referredBy?.toLowerCase());
       if (referrer) {
-        // Calculate 5% commission or ETB 100 referral bonus
         const commission = deposit.amount * 0.05;
         let rewardTotal = commission;
 
-        // If deposit >= 1000 ETB and reward not paid yet, ensure at least ETB 100 reward
         let awardReferralBonus = false;
         if (deposit.amount >= 1000 && !user.referralRewardPaid) {
           awardReferralBonus = true;
@@ -530,6 +1036,9 @@ export function approveDeposit(depositId: string, adminNotes?: string): { succes
             : `You earned ETB ${rewardTotal.toLocaleString()} from ${user.fullName}'s verified deposit!`,
           type: 'referral',
         });
+
+        // Update referral record status in Supabase
+        safeDb(supabase.from('referrals').update({ status: 'Approved', reward_amount: rewardTotal }).eq('referred_user_id', user.id));
       }
     }
 
@@ -542,6 +1051,7 @@ export function approveDeposit(depositId: string, adminNotes?: string): { succes
   if (txIndex !== -1) {
     transactions[txIndex].status = 'Completed';
     setItem(KEYS.TRANSACTIONS, transactions);
+    safeDb(supabase.from('transactions').update({ status: 'Completed' }).eq('reference_id', depositId));
   } else {
     addTransaction({
       userId: deposit.userId,
@@ -576,12 +1086,22 @@ export function rejectDeposit(depositId: string, adminNotes?: string): { success
   deposits[index] = deposit;
   setItem(KEYS.DEPOSITS, deposits);
 
+  // Update in Supabase
+  safeDb(
+    supabase.from('deposits').update({
+      status: 'Rejected',
+      admin_notes: deposit.adminNotes,
+      reviewed_at: deposit.reviewedAt,
+    }).eq('id', depositId)
+  );
+
   // Update transaction log
   const transactions = getTransactions();
   const txIndex = transactions.findIndex((t) => t.referenceId === depositId);
   if (txIndex !== -1) {
     transactions[txIndex].status = 'Failed';
     setItem(KEYS.TRANSACTIONS, transactions);
+    safeDb(supabase.from('transactions').update({ status: 'Failed' }).eq('reference_id', depositId));
   }
 
   // Notify User
@@ -634,6 +1154,8 @@ export function triggerReferralReward(referredUserId: string): { success: boolea
     message: `You earned ETB 100 because ${refUser.fullName} was verified!`,
     type: 'referral',
   });
+
+  safeDb(supabase.from('referrals').update({ status: 'Approved', reward_amount: 100 }).eq('referred_user_id', referredUserId));
 
   return { success: true, message: `ETB 100 referral reward successfully credited to ${referrer.fullName}.` };
 }
@@ -706,6 +1228,9 @@ export function requestWithdrawal(data: {
   withdrawals.unshift(newWithdrawal);
   setItem(KEYS.WITHDRAWALS, withdrawals);
 
+  // Push to Supabase withdrawals
+  safeDb(supabase.from('withdrawals').insert(mapWithdrawalToDb(newWithdrawal)));
+
   // Log transaction
   addTransaction({
     userId: data.userId,
@@ -726,7 +1251,7 @@ export function requestWithdrawal(data: {
   return { success: true, message: 'Withdrawal request submitted successfully!', withdrawal: newWithdrawal };
 }
 
-// Admin Approve/Reject Withdrawal
+// Admin Process Withdrawal
 export function processWithdrawal(withdrawalId: string, action: 'approve' | 'reject', notes?: string) {
   const withdrawals = getWithdrawals();
   const index = withdrawals.findIndex((w) => w.id === withdrawalId);
@@ -765,6 +1290,16 @@ export function processWithdrawal(withdrawalId: string, action: 'approve' | 'rej
 
   withdrawals[index] = withdrawal;
   setItem(KEYS.WITHDRAWALS, withdrawals);
+
+  // Push withdrawal update to Supabase
+  safeDb(
+    supabase.from('withdrawals').update({
+      status: withdrawal.status,
+      admin_notes: withdrawal.adminNotes,
+      reviewed_at: withdrawal.reviewedAt,
+    }).eq('id', withdrawalId)
+  );
+
   return { success: true, message: `Withdrawal request ${action}d.` };
 }
 
@@ -830,13 +1365,16 @@ export function purchaseInvestmentPlan(userId: string, planId: string): { succes
     startDate: startDate.toISOString(),
     endDate: endDate.toISOString(),
     durationDays: plan.durationDays,
-    daysElapsed: 1, // Day 1 active
+    daysElapsed: 1,
     status: 'Active',
   };
 
   const investments = getItem<UserInvestment[]>(KEYS.INVESTMENTS, []);
   investments.unshift(newInvestment);
   setItem(KEYS.INVESTMENTS, investments);
+
+  // Push to Supabase investments table
+  safeDb(supabase.from('investments').insert(mapInvestmentToDb(newInvestment)));
 
   // Log transaction
   addTransaction({
@@ -877,6 +1415,10 @@ export function addTransaction(data: Omit<Transaction, 'id' | 'date'>): Transact
 
   transactions.unshift(tx);
   setItem(KEYS.TRANSACTIONS, transactions);
+
+  // Push to Supabase transactions table
+  safeDb(supabase.from('transactions').insert(mapTransactionToDb(tx)));
+
   return tx;
 }
 
@@ -897,6 +1439,10 @@ export function addNotification(userId: string, data: Omit<NotificationItem, 'id
 
   notifications.unshift(newItem);
   setItem(KEYS.NOTIFICATIONS, notifications);
+
+  // Push to Supabase notifications table
+  safeDb(supabase.from('notifications').insert(mapNotificationToDb(newItem)));
+
   return newItem;
 }
 
@@ -906,6 +1452,7 @@ export function markNotificationAsRead(notificationId: string): void {
   if (index !== -1) {
     notifications[index].read = true;
     setItem(KEYS.NOTIFICATIONS, notifications);
+    safeDb(supabase.from('notifications').update({ read: true }).eq('id', notificationId));
   }
 }
 
@@ -913,6 +1460,7 @@ export function markAllNotificationsAsRead(userId: string): void {
   const notifications = getItem<NotificationItem[]>(KEYS.NOTIFICATIONS, []);
   const updated = notifications.map((n) => (n.userId === userId ? { ...n, read: true } : n));
   setItem(KEYS.NOTIFICATIONS, updated);
+  safeDb(supabase.from('notifications').update({ read: true }).eq('user_id', userId));
 }
 
 // Seed Demo Data Helper
@@ -920,7 +1468,6 @@ export function seedDemoDataForTesting(userId: string): { success: boolean; mess
   const user = getUserById(userId);
   if (!user) return { success: false, message: 'Please log in first.' };
 
-  // Create a pending demo deposit request of ETB 5,000 that can be tested in Admin Panel
   createDepositRequest({
     userId: user.id,
     userName: user.fullName,

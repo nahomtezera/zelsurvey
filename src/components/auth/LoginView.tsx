@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Eye, EyeOff, Lock, Mail, ShieldCheck, ArrowRight, X, KeyRound } from 'lucide-react';
-import { getUsers, setCurrentUser } from '../../services/storage';
+import { Eye, EyeOff, Lock, Mail, ShieldCheck, ArrowRight, X, KeyRound, CheckCircle2 } from 'lucide-react';
+import { loginUserAsync, resetPasswordForEmail } from '../../services/storage';
 import { User as UserType } from '../../types';
 
 interface LoginViewProps {
@@ -21,9 +21,15 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [forgotModalOpen, setForgotModalOpen] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // Forgot Password State
+  const [forgotModalOpen, setForgotModalOpen] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetMessage, setResetMessage] = useState('');
+  const [resetError, setResetError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -32,34 +38,44 @@ export const LoginView: React.FC<LoginViewProps> = ({
 
     setLoading(true);
 
-    setTimeout(() => {
-      const users = getUsers();
-      const user = users.find(
-        (u) =>
-          u.email.toLowerCase() === loginInput.trim().toLowerCase() ||
-          u.username.toLowerCase() === loginInput.trim().toLowerCase()
-      );
-
+    try {
+      const res = await loginUserAsync(loginInput.trim(), password);
       setLoading(false);
 
-      if (!user) {
-        setError('No account found matching this email or username.');
+      if (!res.success || !res.user) {
+        setError(res.message);
         return;
       }
 
-      if (user.password && user.password !== password) {
-        setError('Incorrect password. Please check your credentials and try again.');
-        return;
-      }
+      onSuccess(res.user);
+    } catch (err: any) {
+      setLoading(false);
+      setError(err.message || 'An error occurred during login. Please try again.');
+    }
+  };
 
-      if (user.isBanned) {
-        setError('This account has been restricted. Please contact support.');
-        return;
-      }
+  const handleSendPasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetError('');
+    setResetMessage('');
 
-      setCurrentUser(user);
-      onSuccess(user);
-    }, 500);
+    if (!resetEmail.trim() || !resetEmail.includes('@')) {
+      return setResetError('Please enter a valid email address.');
+    }
+
+    setResetLoading(true);
+    try {
+      const res = await resetPasswordForEmail(resetEmail.trim());
+      setResetLoading(false);
+      if (res.success) {
+        setResetMessage(res.message);
+      } else {
+        setResetError(res.message);
+      }
+    } catch (err: any) {
+      setResetLoading(false);
+      setResetError(err.message || 'Failed to send reset link.');
+    }
   };
 
   return (
@@ -182,18 +198,78 @@ export const LoginView: React.FC<LoginViewProps> = ({
         {/* Forgot Password Modal */}
         {forgotModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm">
-            <div className="bg-white dark:bg-slate-900 rounded-2xl p-6 max-w-xs w-full text-center space-y-4 border border-slate-200 dark:border-slate-800">
-              <KeyRound className="w-10 h-10 text-blue-600 mx-auto" />
-              <h4 className="text-sm font-bold text-slate-900 dark:text-white">Reset Your Password</h4>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Please contact customer support or system administrators to request a password reset link for your account.
-              </p>
+            <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 max-w-sm w-full text-left space-y-4 border border-slate-200 dark:border-slate-800 shadow-2xl relative">
               <button
                 onClick={() => setForgotModalOpen(false)}
-                className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold cursor-pointer transition-colors"
+                className="absolute top-4 right-4 p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-full"
               >
-                Close
+                <X className="w-5 h-5" />
               </button>
+
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                  <KeyRound className="w-6 h-6" />
+                </div>
+                <div>
+                  <h4 className="text-base font-extrabold text-slate-900 dark:text-white">Reset Password</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Enter your email to receive a password reset link.</p>
+                </div>
+              </div>
+
+              {resetError && (
+                <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-xs font-semibold text-red-600 dark:text-red-400">
+                  {resetError}
+                </div>
+              )}
+
+              {resetMessage ? (
+                <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-xs font-semibold text-emerald-600 dark:text-emerald-400 space-y-2">
+                  <div className="flex items-center gap-2 font-bold">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                    <span>Reset Link Sent!</span>
+                  </div>
+                  <p>{resetMessage}</p>
+                  <button
+                    onClick={() => setForgotModalOpen(false)}
+                    className="w-full mt-2 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold cursor-pointer transition-colors"
+                  >
+                    Back to Login
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={handleSendPasswordReset} className="space-y-3 pt-1">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Registered Email Address
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      placeholder="your.email@example.com"
+                      value={resetEmail}
+                      onChange={(e) => setResetEmail(e.target.value)}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setForgotModalOpen(false)}
+                      className="px-4 py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold cursor-pointer transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={resetLoading}
+                      className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold cursor-pointer transition-colors shadow-md disabled:opacity-50"
+                    >
+                      {resetLoading ? 'Sending...' : 'Send Reset Link'}
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
           </div>
         )}

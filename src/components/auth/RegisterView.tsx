@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import confetti from 'canvas-confetti';
 import { Eye, EyeOff, Lock, Mail, Phone, User, CheckCircle2, ShieldCheck, ArrowRight, X } from 'lucide-react';
-import { registerUser, setCurrentUser } from '../../services/storage';
+import { registerUserAsync, setCurrentUser } from '../../services/storage';
 import { User as UserType } from '../../types';
 
 interface RegisterViewProps {
@@ -35,7 +35,7 @@ export const RegisterView: React.FC<RegisterViewProps> = ({
   const [loading, setLoading] = useState(false);
   const [registeredSuccess, setRegisteredSuccess] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -50,8 +50,8 @@ export const RegisterView: React.FC<RegisterViewProps> = ({
 
     setLoading(true);
 
-    setTimeout(() => {
-      const res = registerUser({
+    try {
+      const res = await registerUserAsync({
         fullName: formData.fullName,
         username: formData.username,
         email: formData.email,
@@ -85,7 +85,10 @@ export const RegisterView: React.FC<RegisterViewProps> = ({
       setTimeout(() => {
         onSuccess(res.user!);
       }, 1200);
-    }, 600);
+    } catch (err: any) {
+      setLoading(false);
+      setError(err.message || 'An error occurred during registration.');
+    }
   };
 
   return (
