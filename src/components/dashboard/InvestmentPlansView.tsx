@@ -125,7 +125,7 @@ export const InvestmentPlansView: React.FC<InvestmentPlansViewProps> = ({
                   </div>
 
                   <div className="flex justify-between items-center p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/60 dark:border-emerald-800/60">
-                    <span className="text-emerald-700 dark:text-emerald-300 font-bold">Demo Daily Earnings:</span>
+                    <span className="text-emerald-700 dark:text-emerald-300 font-bold">Daily Earnings:</span>
                     <span className="font-black text-emerald-600 dark:text-emerald-400">ETB {plan.dailyEarnings.toLocaleString()}/day</span>
                   </div>
 
@@ -184,7 +184,7 @@ export const InvestmentPlansView: React.FC<InvestmentPlansViewProps> = ({
                 <span className="font-bold text-slate-900 dark:text-white">ETB {selectedPlan.minInvestment.toLocaleString()}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-slate-500">Demo Daily Earnings:</span>
+                <span className="text-slate-500">Daily Earnings:</span>
                 <span className="font-bold text-emerald-600 dark:text-emerald-400">
                   ETB {selectedPlan.dailyEarnings.toLocaleString()}/day
                 </span>

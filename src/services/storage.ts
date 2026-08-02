@@ -514,10 +514,12 @@ export function initializeStorage() {
 
   // Initial Supabase Sync
   fetchDataFromSupabase();
+  processDailyEarnings();
 
-  // Polling every 6 seconds to keep live data synced
+  // Polling every 6 seconds to keep live data synced & daily earnings processed
   setInterval(() => {
     fetchDataFromSupabase();
+    processDailyEarnings();
   }, 6000);
 }
 
@@ -1358,7 +1360,114 @@ export function updatePlans(plans: InvestmentPlan[]): void {
   setItem(KEYS.PLANS, plans);
 }
 
+// Automatic Daily Earnings Engine
+export function processDailyEarnings(): void {
+  const investments = getItem<UserInvestment[]>(KEYS.INVESTMENTS, []);
+  if (investments.length === 0) return;
+
+  const users = getUsers();
+  let investmentsUpdated = false;
+  let usersUpdated = false;
+
+  const now = Date.now();
+  const DAY_IN_MS = 24 * 60 * 60 * 1000;
+
+  for (let i = 0; i < investments.length; i++) {
+    const inv = investments[i];
+    if (inv.status !== 'Active') continue;
+
+    const startTime = new Date(inv.startDate).getTime();
+    if (isNaN(startTime) || startTime > now) continue;
+
+    const elapsedMs = now - startTime;
+    const fullDaysPassed = Math.floor(elapsedMs / DAY_IN_MS);
+    const targetDaysPaid = Math.min(inv.durationDays, fullDaysPassed);
+
+    const pendingDays = targetDaysPaid - inv.daysElapsed;
+
+    if (pendingDays > 0) {
+      investmentsUpdated = true;
+      const payoutAmount = pendingDays * inv.dailyEarnings;
+      const oldDaysElapsed = inv.daysElapsed;
+      inv.daysElapsed = targetDaysPaid;
+
+      if (inv.daysElapsed >= inv.durationDays) {
+        inv.status = 'Completed';
+      }
+
+      const userIndex = users.findIndex((u) => u.id === inv.userId);
+      if (userIndex !== -1) {
+        usersUpdated = true;
+        users[userIndex].balance += payoutAmount;
+
+        if (inv.status === 'Completed') {
+          users[userIndex].activePlansCount = Math.max(0, users[userIndex].activePlansCount - 1);
+        }
+
+        // Add transaction log for each day paid
+        for (let d = 1; d <= pendingDays; d++) {
+          const currentDayNumber = oldDaysElapsed + d;
+          addTransaction({
+            userId: inv.userId,
+            type: 'Daily Earnings',
+            amount: inv.dailyEarnings,
+            description: `Daily Earnings payout for ${inv.planName} Plan (Day ${currentDayNumber}/${inv.durationDays})`,
+            status: 'Completed',
+            referenceId: `${inv.id}-day-${currentDayNumber}`,
+          });
+        }
+
+        // Send notification
+        if (inv.status === 'Completed') {
+          addNotification(inv.userId, {
+            title: 'Investment Plan Completed! 🏆',
+            message: `Your ${inv.planName} Plan has finished all ${inv.durationDays} days of daily returns! Total returned: ETB ${inv.totalReturn.toLocaleString()}.`,
+            type: 'investment',
+          });
+        } else {
+          addNotification(inv.userId, {
+            title: 'Daily Earnings Credited! 💸',
+            message: `ETB ${payoutAmount.toLocaleString()} daily earnings credited from your ${inv.planName} Plan (${pendingDays} day${pendingDays > 1 ? 's' : ''}).`,
+            type: 'investment',
+          });
+        }
+      }
+    }
+  }
+
+  if (usersUpdated) {
+    setItem(KEYS.USERS, users);
+    users.forEach((u) => {
+      safeDb(
+        supabase
+          .from('profiles')
+          .update({
+            balance: u.balance,
+            active_plans_count: u.activePlansCount,
+          })
+          .eq('id', u.id)
+      );
+    });
+  }
+
+  if (investmentsUpdated) {
+    setItem(KEYS.INVESTMENTS, investments);
+    investments.forEach((inv) => {
+      safeDb(
+        supabase
+          .from('investments')
+          .update({
+            days_elapsed: inv.daysElapsed,
+            status: inv.status,
+          })
+          .eq('id', inv.id)
+      );
+    });
+  }
+}
+
 export function getUserInvestments(userId: string): UserInvestment[] {
+  processDailyEarnings();
   return getItem<UserInvestment[]>(KEYS.INVESTMENTS, []).filter((inv) => inv.userId === userId);
 }
 
@@ -1396,7 +1505,7 @@ export function purchaseInvestmentPlan(userId: string, planId: string): { succes
     startDate: startDate.toISOString(),
     endDate: endDate.toISOString(),
     durationDays: plan.durationDays,
-    daysElapsed: 1,
+    daysElapsed: 0,
     status: 'Active',
   };
 
@@ -1424,11 +1533,14 @@ export function purchaseInvestmentPlan(userId: string, planId: string): { succes
     type: 'investment',
   });
 
+  processDailyEarnings();
+
   return { success: true, message: `Successfully invested ETB ${plan.minInvestment.toLocaleString()} in ${plan.name} Plan!` };
 }
 
 // Transaction Logging
 export function getTransactions(): Transaction[] {
+  processDailyEarnings();
   return getItem<Transaction[]>(KEYS.TRANSACTIONS, []);
 }
 

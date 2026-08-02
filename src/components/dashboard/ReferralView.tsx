@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Users, Copy, Check, Share2, Sparkles, Gift, QrCode, Trophy, ExternalLink, ArrowRight } from 'lucide-react';
 import { User } from '../../types';
-import { DEMO_LEADERBOARD } from '../../services/gamificationService';
+import { TOP_REFERRERS_LEADERBOARD } from '../../services/gamificationService';
 import { getTransactions } from '../../services/storage';
 
 interface ReferralViewProps {
@@ -196,7 +196,7 @@ export const ReferralView: React.FC<ReferralViewProps> = ({ user, showToast }) =
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-semibold">
-              {DEMO_LEADERBOARD.map((item) => (
+              {TOP_REFERRERS_LEADERBOARD.map((item) => (
                 <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                   <td className="py-3 pl-2">
                     <span className={`w-7 h-7 rounded-full flex items-center justify-center font-black ${

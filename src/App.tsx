@@ -7,6 +7,7 @@ import {
   getDeposits, 
   getUserTransactions, 
   getUserInvestments,
+  processDailyEarnings,
   seedDemoDataForTesting 
 } from './services/storage';
 import { User, ActiveTab, AuthMode } from './types';
@@ -71,8 +72,16 @@ export default function App() {
     };
 
     window.addEventListener('zelsurvey_storage_updated', handleStorageUpdate);
+
+    // Periodic check for daily earnings payouts
+    const interval = setInterval(() => {
+      processDailyEarnings();
+      refreshData();
+    }, 10000);
+
     return () => {
       window.removeEventListener('zelsurvey_storage_updated', handleStorageUpdate);
+      clearInterval(interval);
     };
   }, []);
 

@@ -147,7 +147,7 @@ export interface UserInvestment {
   lastClaimDate?: string;
 }
 
-export type TransactionType = 'Deposit' | 'Withdrawal' | 'Investment' | 'Referral Commission' | 'Plan Earnings' | 'Admin Adjustment';
+export type TransactionType = 'Deposit' | 'Withdrawal' | 'Investment' | 'Referral Commission' | 'Plan Earnings' | 'Daily Earnings' | 'Admin Adjustment';
 
 export interface Transaction {
   id: string;

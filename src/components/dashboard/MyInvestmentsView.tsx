@@ -1,8 +1,7 @@
-import React from 'react';
-import { motion } from 'motion/react';
-import { Briefcase, Calendar, CheckCircle2, Clock, PieChart, TrendingUp, ArrowRight } from 'lucide-react';
-import { getUserInvestments } from '../../services/storage';
-import { User } from '../../types';
+import React, { useEffect, useState } from 'react';
+import { Briefcase, Clock, Calendar, CheckCircle2, PieChart, TrendingUp, DollarSign, Timer } from 'lucide-react';
+import { getUserInvestments, processDailyEarnings } from '../../services/storage';
+import { User, UserInvestment } from '../../types';
 
 interface MyInvestmentsViewProps {
   user: User;
@@ -10,7 +9,42 @@ interface MyInvestmentsViewProps {
 }
 
 export const MyInvestmentsView: React.FC<MyInvestmentsViewProps> = ({ user, setActiveTab }) => {
-  const investments = getUserInvestments(user.id);
+  const [now, setNow] = useState<number>(Date.now());
+  const [investments, setInvestments] = useState<UserInvestment[]>(() => {
+    processDailyEarnings();
+    return getUserInvestments(user.id);
+  });
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(Date.now());
+      processDailyEarnings();
+      setInvestments(getUserInvestments(user.id));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [user.id]);
+
+  const formatCountdown = (inv: UserInvestment) => {
+    if (inv.status === 'Completed' || inv.daysElapsed >= inv.durationDays) {
+      return 'Completed 🏆';
+    }
+    const startTime = new Date(inv.startDate).getTime();
+    if (isNaN(startTime)) return 'Active';
+
+    const DAY_IN_MS = 24 * 60 * 60 * 1000;
+    const nextPayoutTime = startTime + (inv.daysElapsed + 1) * DAY_IN_MS;
+    const diff = nextPayoutTime - now;
+
+    if (diff <= 0) {
+      return 'Processing Daily Payout... 💸';
+    }
+
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+    return `${hours.toString().padStart(2, '0')}h ${minutes.toString().padStart(2, '0')}m ${seconds.toString().padStart(2, '0')}s`;
+  };
 
   return (
     <div className="space-y-8 max-w-5xl mx-auto">
@@ -24,7 +58,7 @@ export const MyInvestmentsView: React.FC<MyInvestmentsViewProps> = ({ user, setA
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white">My Investments</h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Track active plan durations, daily returns, and estimated completion dates.
+            Track active plan durations, daily returns, and real-time next reward countdowns.
           </p>
         </div>
 
@@ -45,7 +79,7 @@ export const MyInvestmentsView: React.FC<MyInvestmentsViewProps> = ({ user, setA
           </div>
           <h3 className="text-lg font-bold text-slate-900 dark:text-white">No Active Investments Yet</h3>
           <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
-            Deposit funds to your wallet and subscribe to any of our 5 investment packages to start receiving daily returns.
+            Deposit funds to your wallet and subscribe to any of our investment packages to start receiving daily earnings automatically.
           </p>
           <button
             onClick={() => setActiveTab('investment-plans')}
@@ -58,6 +92,9 @@ export const MyInvestmentsView: React.FC<MyInvestmentsViewProps> = ({ user, setA
         <div className="grid md:grid-cols-2 gap-6">
           {investments.map((inv) => {
             const progressPercent = Math.min(100, Math.round((inv.daysElapsed / inv.durationDays) * 100));
+            const daysRemaining = Math.max(0, inv.durationDays - inv.daysElapsed);
+            const totalEarnedSoFar = inv.daysElapsed * inv.dailyEarnings;
+            const remainingExpectedEarnings = daysRemaining * inv.dailyEarnings;
 
             return (
               <div
@@ -75,12 +112,13 @@ export const MyInvestmentsView: React.FC<MyInvestmentsViewProps> = ({ user, setA
                   <span className={`px-3 py-1 rounded-full text-xs font-bold ${
                     inv.status === 'Active'
                       ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
-                      : 'bg-slate-100 text-slate-600'
+                      : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
                   }`}>
-                    {inv.status === 'Active' ? '🟢 Active' : 'Completed'}
+                    {inv.status === 'Active' ? '🟢 Active' : '🏆 Completed'}
                   </span>
                 </div>
 
+                {/* Metrics Grid */}
                 <div className="grid grid-cols-2 gap-3 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/50 text-xs">
                   <div>
                     <p className="text-[10px] text-slate-400 font-semibold uppercase">Investment Amount</p>
@@ -90,9 +128,23 @@ export const MyInvestmentsView: React.FC<MyInvestmentsViewProps> = ({ user, setA
                   </div>
 
                   <div>
-                    <p className="text-[10px] text-slate-400 font-semibold uppercase">Demo Daily Earnings</p>
+                    <p className="text-[10px] text-slate-400 font-semibold uppercase">Daily Earnings</p>
                     <p className="text-sm font-extrabold text-emerald-600 dark:text-emerald-400">
                       ETB {inv.dailyEarnings.toLocaleString()}/day
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-[10px] text-slate-400 font-semibold uppercase">Total Earned So Far</p>
+                    <p className="text-xs font-extrabold text-blue-600 dark:text-blue-400">
+                      ETB {totalEarnedSoFar.toLocaleString()}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-[10px] text-slate-400 font-semibold uppercase">Remaining Expected</p>
+                    <p className="text-xs font-extrabold text-amber-600 dark:text-amber-400">
+                      ETB {remainingExpectedEarnings.toLocaleString()}
                     </p>
                   </div>
 
@@ -104,10 +156,12 @@ export const MyInvestmentsView: React.FC<MyInvestmentsViewProps> = ({ user, setA
                   </div>
                 </div>
 
-                {/* Progress Bar */}
+                {/* Progress Bar & Days Remaining */}
                 <div className="space-y-1.5">
                   <div className="flex justify-between text-xs font-semibold">
-                    <span className="text-slate-500">Plan Progress ({inv.daysElapsed} of {inv.durationDays} Days)</span>
+                    <span className="text-slate-500">
+                      Days Elapsed: {inv.daysElapsed} / {inv.durationDays} Days ({daysRemaining} Day{daysRemaining === 1 ? '' : 's'} Left)
+                    </span>
                     <span className="text-blue-600 font-extrabold">{progressPercent}%</span>
                   </div>
 
@@ -119,8 +173,19 @@ export const MyInvestmentsView: React.FC<MyInvestmentsViewProps> = ({ user, setA
                   </div>
                 </div>
 
+                {/* Next Reward Time Countdown */}
+                <div className="p-3 bg-amber-500/10 dark:bg-amber-950/40 rounded-2xl border border-amber-500/20 text-xs flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Timer className="w-4 h-4 text-amber-600 dark:text-amber-400 animate-pulse" />
+                    <span className="font-semibold text-slate-700 dark:text-slate-300">Next Reward Time:</span>
+                  </div>
+                  <span className="font-mono font-extrabold text-amber-700 dark:text-amber-300">
+                    {formatCountdown(inv)}
+                  </span>
+                </div>
+
                 <div className="p-3 bg-blue-50/60 dark:bg-blue-950/30 rounded-xl border border-blue-100 dark:border-blue-900/40 text-[11px] text-blue-900 dark:text-blue-300 flex items-center justify-between">
-                  <span>Total Return Expected:</span>
+                  <span>Total Expected Return:</span>
                   <span className="font-black">ETB {inv.totalReturn.toLocaleString()}</span>
                 </div>
 

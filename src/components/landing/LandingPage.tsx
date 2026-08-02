@@ -294,7 +294,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth, onSelectPl
                     <span className="font-extrabold text-slate-900 dark:text-white">ETB {plan.minInvestment.toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between items-center p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/60 dark:border-emerald-800/60">
-                    <span className="text-emerald-700 dark:text-emerald-300 font-bold">Demo Daily Earnings:</span>
+                    <span className="text-emerald-700 dark:text-emerald-300 font-bold">Daily Earnings:</span>
                     <span className="font-black text-emerald-600 dark:text-emerald-400">ETB {plan.dailyEarnings.toLocaleString()}/day</span>
                   </div>
                   <div className="flex justify-between items-center">
@@ -455,7 +455,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onOpenAuth, onSelectPl
           </div>
 
           <p className="text-center md:text-left">
-            © 2026 ZelSurvey Fintech Platform. All rights reserved. Self-contained investment demonstration environment.
+            © 2026 ZelSurvey Fintech Platform. All rights reserved. Automated investment management systems.
           </p>
 
           <div className="flex items-center gap-6">

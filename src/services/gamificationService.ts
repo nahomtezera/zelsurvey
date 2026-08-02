@@ -409,9 +409,9 @@ export function getProfileCompletion(user: User): ProfileCompletionDetails {
 }
 
 // -------------------------------------------------------------
-// REFERRAL LEADERBOARD DEMO DATA
+// REFERRAL LEADERBOARD DATA
 // -------------------------------------------------------------
-export const DEMO_LEADERBOARD: ReferrerLeaderboardItem[] = [
+export const TOP_REFERRERS_LEADERBOARD: ReferrerLeaderboardItem[] = [
   {
     id: 'lead-1',
     rank: 1,
