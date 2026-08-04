@@ -1122,237 +1122,267 @@ export function createDepositRequest(data: {
 
 // Admin: Approve Deposit
 export async function approveDeposit(depositId: string, adminNotes?: string): Promise<{ success: boolean; message: string }> {
-  const deposits = getDeposits();
-  const index = deposits.findIndex((d) => d.id === depositId);
-  if (index === -1) return { success: false, message: 'Deposit request not found.' };
+  // 1. Fetch deposit directly from Supabase deposits table
+  const { data: depData, error: depFetchErr } = await supabase
+    .from('deposits')
+    .select('*')
+    .eq('id', depositId)
+    .maybeSingle();
 
-  const deposit = deposits[index];
-  if (deposit.status === 'Approved') return { success: false, message: 'Deposit is already approved.' };
-
-  deposit.status = 'Approved';
-  deposit.adminNotes = adminNotes || 'Bank transfer verified by Super Admin';
-  deposit.reviewedAt = new Date().toISOString();
-  deposits[index] = deposit;
-  setItem(KEYS.DEPOSITS, deposits);
-
-  // Push deposit update to Supabase
-  try {
-    const { error: depErr } = await supabase.from('deposits').update({
-      status: 'Approved',
-      admin_notes: deposit.adminNotes,
-      reviewed_at: deposit.reviewedAt,
-    }).eq('id', depositId);
-
-    if (depErr) {
-      await supabase.from('deposits').upsert(mapDepositToDb(deposit));
-    }
-  } catch (err) {
-    console.warn('Supabase deposit approval update notice:', err);
+  if (depFetchErr) {
+    return { success: false, message: `Error fetching deposit from database: ${depFetchErr.message}` };
   }
 
-  // Update User Wallet & Total Deposits
-  const user = getUserById(deposit.userId);
-  if (user) {
-    user.balance += deposit.amount;
-    user.totalDeposits += deposit.amount;
+  let deposit = depData;
 
-    // Check if referrer gets ETB 100 referral reward for ETB 1,000+ deposit
-    if (user.referredBy) {
-      const users = getUsers();
-      const referrer = users.find((u) => u.referralCode.toLowerCase() === user.referredBy?.toLowerCase());
+  // Fallback to local storage if not found in Supabase query
+  if (!deposit) {
+    const localDeposits = getDeposits();
+    const found = localDeposits.find((d) => d.id === depositId);
+    if (found) {
+      deposit = mapDepositToDb(found);
+    }
+  }
+
+  if (!deposit) {
+    return { success: false, message: 'Deposit request not found.' };
+  }
+
+  if (deposit.status === 'Approved') {
+    return { success: false, message: 'Deposit is already approved.' };
+  }
+
+  const reviewedAt = new Date().toISOString();
+  const notes = adminNotes || 'Bank transfer verified by Super Admin';
+  const userId = deposit.user_id || deposit.userId;
+  const depositAmount = Number(deposit.amount || 0);
+
+  // 1. Update the deposit in deposits table
+  const { error: depUpdateErr } = await supabase
+    .from('deposits')
+    .update({
+      status: 'Approved',
+      admin_notes: notes,
+      reviewed_at: reviewedAt,
+    })
+    .eq('id', depositId);
+
+  if (depUpdateErr) {
+    return { success: false, message: `Failed to update deposit in database: ${depUpdateErr.message}` };
+  }
+
+  // 2. Fetch User Profile
+  const { data: profile, error: profileFetchErr } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (profileFetchErr) {
+    return { success: false, message: `Failed to fetch user profile: ${profileFetchErr.message}` };
+  }
+
+  const currentProfileBal = Number(profile?.balance || 0);
+  const currentProfileDeposits = Number(profile?.total_deposits || 0);
+  const newBal = currentProfileBal + depositAmount;
+  const newTotalDeposits = currentProfileDeposits + depositAmount;
+
+  // Update profile
+  const { error: profileUpdateErr } = await supabase
+    .from('profiles')
+    .update({
+      balance: newBal,
+      total_deposits: newTotalDeposits,
+    })
+    .eq('id', userId);
+
+  if (profileUpdateErr) {
+    return { success: false, message: `Failed to update user profile in database: ${profileUpdateErr.message}` };
+  }
+
+  // 3. Credit user's wallet
+  const { data: walletData } = await supabase
+    .from('wallets')
+    .select('*')
+    .or(`id.eq.${userId},user_id.eq.${userId}`)
+    .maybeSingle();
+
+  const currentWalletBal = Number(walletData?.balance || currentProfileBal);
+  const currentWalletDeposits = Number(walletData?.total_deposits || currentProfileDeposits);
+  const newWalletBal = currentWalletBal + depositAmount;
+  const newWalletDeposits = currentWalletDeposits + depositAmount;
+
+  const { error: walletUpdateErr } = await supabase
+    .from('wallets')
+    .upsert({
+      id: userId,
+      user_id: userId,
+      balance: newWalletBal,
+      total_deposits: newWalletDeposits,
+      updated_at: new Date().toISOString(),
+    });
+
+  if (walletUpdateErr) {
+    return { success: false, message: `Failed to credit user wallet in database: ${walletUpdateErr.message}` };
+  }
+
+  // 4. Create/update transaction record
+  const { data: existingTx } = await supabase
+    .from('transactions')
+    .select('*')
+    .eq('reference_id', depositId)
+    .maybeSingle();
+
+  if (existingTx) {
+    const { error: txUpdateErr } = await supabase
+      .from('transactions')
+      .update({
+        type: 'Deposit',
+        status: 'Completed',
+        amount: depositAmount,
+      })
+      .eq('id', existingTx.id);
+
+    if (txUpdateErr) {
+      return { success: false, message: `Failed to update transaction status: ${txUpdateErr.message}` };
+    }
+  } else {
+    const newTxId = 'TXN-' + Math.floor(100000 + Math.random() * 900000);
+    const { error: txInsertErr } = await supabase
+      .from('transactions')
+      .insert({
+        id: newTxId,
+        user_id: userId,
+        type: 'Deposit',
+        amount: depositAmount,
+        description: `Deposit approved via ${deposit.bank_used || deposit.bankUsed || 'Bank Transfer'} (${deposit.transaction_ref || deposit.transactionRef || deposit.id})`,
+        date: new Date().toISOString(),
+        status: 'Completed',
+        reference_id: depositId,
+      });
+
+    if (txInsertErr) {
+      return { success: false, message: `Failed to create transaction in database: ${txInsertErr.message}` };
+    }
+  }
+
+  // 5. Handle Referrals
+  if (profile?.referred_by) {
+    try {
+      const { data: referrer } = await supabase
+        .from('profiles')
+        .select('*')
+        .ilike('referral_code', profile.referred_by)
+        .maybeSingle();
+
       if (referrer) {
-        const commission = deposit.amount * 0.05;
+        const commission = depositAmount * 0.05;
         let rewardTotal = commission;
-
         let awardReferralBonus = false;
-        if (deposit.amount >= 1000 && !user.referralRewardPaid) {
+
+        if (depositAmount >= 1000 && !profile.referral_reward_paid) {
           awardReferralBonus = true;
-          user.referralRewardPaid = true;
-          if (rewardTotal < 100) {
-            rewardTotal = 100;
-          }
+          if (rewardTotal < 100) rewardTotal = 100;
+          await supabase.from('profiles').update({ referral_reward_paid: true }).eq('id', userId);
         }
 
-        referrer.balance += rewardTotal;
-        referrer.referralEarnings += rewardTotal;
-        updateUser(referrer);
-        safeDb(supabase.from('profiles').update({ balance: referrer.balance }).eq('id', referrer.id));
-        safeDb(supabase.from('wallets').update({ balance: referrer.balance }).eq('user_id', referrer.id));
+        const refBal = Number(referrer.balance || 0) + rewardTotal;
+        const refEarnings = Number(referrer.referral_earnings || 0) + rewardTotal;
 
-        addTransaction({
-          userId: referrer.id,
+        await supabase.from('profiles').update({
+          balance: refBal,
+          referral_earnings: refEarnings,
+        }).eq('id', referrer.id);
+
+        await supabase.from('wallets').upsert({
+          id: referrer.id,
+          user_id: referrer.id,
+          balance: refBal,
+          updated_at: new Date().toISOString(),
+        });
+
+        await supabase.from('transactions').insert({
+          id: 'TXN-' + Math.floor(100000 + Math.random() * 900000),
+          user_id: referrer.id,
           type: 'Referral Commission',
           amount: rewardTotal,
           description: awardReferralBonus
-            ? `ETB 100 Referral Reward for inviting ${user.fullName}`
-            : `5% referral commission from ${user.fullName}'s deposit`,
+            ? `ETB 100 Referral Reward for inviting ${profile.full_name || 'User'}`
+            : `5% referral commission from ${profile.full_name || 'User'}'s deposit`,
+          date: new Date().toISOString(),
           status: 'Completed',
         });
 
-        addNotification(referrer.id, {
-          title: 'Referral Reward Credited! 🎉',
-          message: awardReferralBonus
-            ? `You earned ETB 100 because ${user.fullName} completed an approved deposit of ETB ${deposit.amount.toLocaleString()}!`
-            : `You earned ETB ${rewardTotal.toLocaleString()} from ${user.fullName}'s verified deposit!`,
-          type: 'referral',
-        });
-
-        // Update referral record status in Supabase
-        safeDb(supabase.from('referrals').update({ status: 'Approved', reward_amount: rewardTotal }).eq('referred_user_id', user.id));
+        await supabase.from('referrals').update({
+          status: 'Approved',
+          reward_amount: rewardTotal,
+        }).eq('referred_user_id', userId);
       }
-    }
-
-    updateUser(user);
-
-    // Update profiles in Supabase
-    try {
-      const { error: pErr } = await supabase.from('profiles').update({
-        balance: user.balance,
-        total_deposits: user.totalDeposits,
-      }).eq('id', user.id);
-
-      if (pErr) {
-        await supabase.from('profiles').upsert(mapUserToProfile(user));
-      }
-    } catch (err) {
-      console.warn('Supabase profile balance update notice:', err);
-    }
-
-    // Update wallets in Supabase
-    try {
-      await supabase.from('wallets').update({
-        balance: user.balance,
-        total_deposits: user.totalDeposits,
-      }).eq('user_id', user.id);
-
-      await supabase.from('wallets').update({
-        balance: user.balance,
-        total_deposits: user.totalDeposits,
-      }).eq('id', user.id);
-
-      // Upsert to ensure wallets table record exists with updated balance and total_deposits
-      await supabase.from('wallets').upsert({
-        id: user.id,
-        user_id: user.id,
-        balance: user.balance,
-        total_deposits: user.totalDeposits,
-        updated_at: new Date().toISOString(),
-      });
-    } catch (err) {
-      console.warn('Supabase wallet balance update notice:', err);
+    } catch (refErr) {
+      console.warn('Referral reward processing notice:', refErr);
     }
   }
 
-  // Update transaction status in local storage and Supabase
-  const transactions = getTransactions();
-  const txIndex = transactions.findIndex((t) => t.referenceId === depositId);
-  if (txIndex !== -1) {
-    transactions[txIndex].status = 'Completed';
-    transactions[txIndex].amount = deposit.amount;
-    transactions[txIndex].type = 'Deposit';
-    setItem(KEYS.TRANSACTIONS, transactions);
-    try {
-      const { error: txErr } = await supabase.from('transactions').update({
-        status: 'Completed',
-        amount: deposit.amount,
-        type: 'Deposit',
-      }).eq('reference_id', depositId);
-
-      if (txErr) {
-        await supabase.from('transactions').upsert(mapTransactionToDb(transactions[txIndex]));
-      }
-    } catch (err) {
-      console.warn('Supabase transaction status update notice:', err);
-    }
-  } else {
-    const newTx = {
-      id: 'TXN-' + Math.floor(100000 + Math.random() * 900000),
-      userId: deposit.userId,
-      type: 'Deposit' as const,
-      amount: deposit.amount,
-      description: `Deposit approved via ${deposit.bankUsed} (${deposit.transactionRef || deposit.id})`,
-      date: new Date().toISOString(),
-      status: 'Completed' as const,
-      referenceId: deposit.id,
-    };
-    addTransaction(newTx);
-    try {
-      await supabase.from('transactions').upsert({
-        id: newTx.id,
-        user_id: deposit.userId,
-        type: 'Deposit',
-        amount: deposit.amount,
-        description: newTx.description,
-        date: newTx.date,
-        status: 'Completed',
-        reference_id: deposit.id,
-      });
-    } catch (err) {
-      console.warn('Supabase transaction insert notice:', err);
-    }
-  }
-
-  // Notify User
-  addNotification(deposit.userId, {
+  // 6. Notify User
+  addNotification(userId, {
     title: 'Deposit Approved! 🎉',
-    message: `Your deposit of ETB ${deposit.amount.toLocaleString()} has been approved and credited to your wallet balance.`,
+    message: `Your deposit of ETB ${depositAmount.toLocaleString()} has been approved and credited to your wallet balance.`,
     type: 'deposit',
   });
 
-  // Broadcast update & re-fetch from Supabase
-  window.dispatchEvent(new Event('zelsurvey_storage_updated'));
+  // 7. Refresh all data from Supabase and notify application UI
   await fetchDataFromSupabase();
+  window.dispatchEvent(new Event('zelsurvey_storage_updated'));
 
-  return { success: true, message: `Deposit of ETB ${deposit.amount.toLocaleString()} approved and wallet credited.` };
+  return { success: true, message: `Deposit of ETB ${depositAmount.toLocaleString()} approved and wallet credited.` };
 }
 
 // Admin: Reject Deposit
 export async function rejectDeposit(depositId: string, adminNotes?: string): Promise<{ success: boolean; message: string }> {
-  const deposits = getDeposits();
-  const index = deposits.findIndex((d) => d.id === depositId);
-  if (index === -1) return { success: false, message: 'Deposit request not found.' };
+  const reviewedAt = new Date().toISOString();
+  const notes = adminNotes || 'Proof verification failed or invalid reference.';
 
-  const deposit = deposits[index];
-  deposit.status = 'Rejected';
-  deposit.adminNotes = adminNotes || 'Proof verification failed or invalid reference.';
-  deposit.reviewedAt = new Date().toISOString();
-  deposits[index] = deposit;
-  setItem(KEYS.DEPOSITS, deposits);
+  const { data: depData, error: depFetchErr } = await supabase
+    .from('deposits')
+    .select('*')
+    .eq('id', depositId)
+    .maybeSingle();
 
-  // Update in Supabase
-  try {
-    await supabase.from('deposits').update({
+  if (depFetchErr) {
+    return { success: false, message: `Error fetching deposit from database: ${depFetchErr.message}` };
+  }
+
+  const { error: depUpdateErr } = await supabase
+    .from('deposits')
+    .update({
       status: 'Rejected',
-      admin_notes: deposit.adminNotes,
-      reviewed_at: deposit.reviewedAt,
-    }).eq('id', depositId);
-  } catch (err) {
-    console.warn('Supabase deposit rejection update notice:', err);
+      admin_notes: notes,
+      reviewed_at: reviewedAt,
+    })
+    .eq('id', depositId);
+
+  if (depUpdateErr) {
+    return { success: false, message: `Failed to reject deposit in database: ${depUpdateErr.message}` };
   }
 
-  // Update transaction log
-  const transactions = getTransactions();
-  const txIndex = transactions.findIndex((t) => t.referenceId === depositId);
-  if (txIndex !== -1) {
-    transactions[txIndex].status = 'Failed';
-    setItem(KEYS.TRANSACTIONS, transactions);
-    try {
-      await supabase.from('transactions').update({ status: 'Failed' }).eq('reference_id', depositId);
-    } catch (err) {
-      console.warn('Supabase transaction update notice:', err);
-    }
+  const userId = depData?.user_id || depData?.userId;
+
+  // Update transaction log in Supabase
+  await supabase
+    .from('transactions')
+    .update({ status: 'Failed' })
+    .eq('reference_id', depositId);
+
+  if (userId) {
+    addNotification(userId, {
+      title: 'Deposit Verification Failed ❌',
+      message: `Your deposit request was rejected: ${notes}`,
+      type: 'deposit',
+    });
   }
 
-  // Notify User
-  addNotification(deposit.userId, {
-    title: 'Deposit Verification Failed ❌',
-    message: `Your deposit of ETB ${deposit.amount.toLocaleString()} was rejected: ${deposit.adminNotes}`,
-    type: 'deposit',
-  });
-
-  // Broadcast update & re-fetch from Supabase
-  window.dispatchEvent(new Event('zelsurvey_storage_updated'));
   await fetchDataFromSupabase();
+  window.dispatchEvent(new Event('zelsurvey_storage_updated'));
 
   return { success: true, message: 'Deposit request rejected.' };
 }
