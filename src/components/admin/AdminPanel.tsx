@@ -149,7 +149,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const totalTransactionsCount = transactions.length;
 
   // Deposit Actions
-  const handleApproveDeposit = async (depId: string) => {
+  const handleApproveDeposit = async (depId: string | null) => {
+    if (!depId) {
+      showToast('error', 'Approval Error', 'No deposit selected for approval.');
+      return;
+    }
     const res = await approveDeposit(depId, adminNotesInput || 'Bank transfer verified by Super Admin');
     if (res.success) {
       showToast('success', 'Deposit Verified! 💰', res.message);

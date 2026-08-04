@@ -370,7 +370,32 @@ export async function fetchDataFromSupabase(): Promise<void> {
     // 1. Fetch Profiles
     const { data: profiles, error: pErr } = await supabase.from('profiles').select('*');
     if (!pErr && profiles && profiles.length > 0) {
-      const usersList = profiles.map(mapProfileToUser);
+      const dbUsersList = profiles.map(mapProfileToUser);
+      const localUsers = getItem<User[]>(KEYS.USERS, []);
+
+      const mergedUsersMap = new Map<string, User>();
+      dbUsersList.forEach((dbUser) => {
+        mergedUsersMap.set(dbUser.id, dbUser);
+      });
+
+      localUsers.forEach((localUser) => {
+        const dbUser = mergedUsersMap.get(localUser.id);
+        if (dbUser) {
+          const merged: User = {
+            ...dbUser,
+            ...localUser,
+            balance: Math.max(localUser.balance || 0, dbUser.balance || 0),
+            totalDeposits: Math.max(localUser.totalDeposits || 0, dbUser.totalDeposits || 0),
+            totalWithdrawals: Math.max(localUser.totalWithdrawals || 0, dbUser.totalWithdrawals || 0),
+            referralEarnings: Math.max(localUser.referralEarnings || 0, dbUser.referralEarnings || 0),
+          };
+          mergedUsersMap.set(localUser.id, merged);
+        } else {
+          mergedUsersMap.set(localUser.id, localUser);
+        }
+      });
+
+      const usersList = Array.from(mergedUsersMap.values());
       setItem(KEYS.USERS, usersList);
 
       // Sync current logged in user
@@ -391,19 +416,95 @@ export async function fetchDataFromSupabase(): Promise<void> {
     // 2. Fetch Deposits
     const { data: deposits } = await supabase.from('deposits').select('*').order('date', { ascending: false });
     if (deposits) {
-      setItem(KEYS.DEPOSITS, deposits.map(mapDbToDeposit));
+      const dbDeposits = deposits.map(mapDbToDeposit);
+      const localDeposits = getItem<DepositRequest[]>(KEYS.DEPOSITS, []);
+
+      const mergedDepositsMap = new Map<string, DepositRequest>();
+      dbDeposits.forEach((dbDep) => {
+        mergedDepositsMap.set(dbDep.id, dbDep);
+      });
+
+      localDeposits.forEach((localDep) => {
+        const dbDep = mergedDepositsMap.get(localDep.id);
+        if (dbDep) {
+          if ((localDep.status === 'Approved' || localDep.status === 'Rejected') && dbDep.status === 'Pending') {
+            mergedDepositsMap.set(localDep.id, {
+              ...dbDep,
+              status: localDep.status,
+              reviewedAt: localDep.reviewedAt || dbDep.reviewedAt,
+              adminNotes: localDep.adminNotes || dbDep.adminNotes,
+            });
+          }
+        } else {
+          mergedDepositsMap.set(localDep.id, localDep);
+        }
+      });
+
+      const mergedDeposits = Array.from(mergedDepositsMap.values()).sort(
+        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+      );
+      setItem(KEYS.DEPOSITS, mergedDeposits);
     }
 
     // 3. Fetch Withdrawals
     const { data: withdrawals } = await supabase.from('withdrawals').select('*').order('date', { ascending: false });
     if (withdrawals) {
-      setItem(KEYS.WITHDRAWALS, withdrawals.map(mapDbToWithdrawal));
+      const dbWithdrawals = withdrawals.map(mapDbToWithdrawal);
+      const localWithdrawals = getItem<WithdrawalRequest[]>(KEYS.WITHDRAWALS, []);
+
+      const mergedWithdrawalsMap = new Map<string, WithdrawalRequest>();
+      dbWithdrawals.forEach((dbW) => {
+        mergedWithdrawalsMap.set(dbW.id, dbW);
+      });
+
+      localWithdrawals.forEach((localW) => {
+        const dbW = mergedWithdrawalsMap.get(localW.id);
+        if (dbW) {
+          if ((localW.status === 'Approved' || localW.status === 'Rejected') && dbW.status === 'Pending') {
+            mergedWithdrawalsMap.set(localW.id, {
+              ...dbW,
+              status: localW.status,
+              reviewedAt: localW.reviewedAt || dbW.reviewedAt,
+              adminNotes: localW.adminNotes || dbW.adminNotes,
+            });
+          }
+        } else {
+          mergedWithdrawalsMap.set(localW.id, localW);
+        }
+      });
+
+      const mergedWithdrawals = Array.from(mergedWithdrawalsMap.values()).sort(
+        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+      );
+      setItem(KEYS.WITHDRAWALS, mergedWithdrawals);
     }
 
     // 4. Fetch Transactions
     const { data: transactions } = await supabase.from('transactions').select('*').order('date', { ascending: false });
     if (transactions) {
-      setItem(KEYS.TRANSACTIONS, transactions.map(mapDbToTransaction));
+      const dbTxList = transactions.map(mapDbToTransaction);
+      const localTxList = getItem<Transaction[]>(KEYS.TRANSACTIONS, []);
+
+      const mergedTxMap = new Map<string, Transaction>();
+      dbTxList.forEach((dbT) => {
+        mergedTxMap.set(dbT.id, dbT);
+      });
+
+      localTxList.forEach((localT) => {
+        const dbT = mergedTxMap.get(localT.id);
+        if (dbT) {
+          if (localT.status === 'Completed' && dbT.status === 'Pending') {
+            mergedTxMap.set(localT.id, { ...dbT, status: 'Completed' });
+          }
+        } else {
+          mergedTxMap.set(localT.id, localT);
+        }
+      });
+
+      const mergedTx = Array.from(mergedTxMap.values()).sort(
+        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+      );
+      setItem(KEYS.TRANSACTIONS, mergedTx);
     }
 
     // 5. Fetch Notifications
@@ -1063,11 +1164,15 @@ export async function approveDeposit(depositId: string, adminNotes?: string): Pr
 
   // Push deposit update to Supabase
   try {
-    await supabase.from('deposits').update({
+    const { error: depErr } = await supabase.from('deposits').update({
       status: 'Approved',
       admin_notes: deposit.adminNotes,
       reviewed_at: deposit.reviewedAt,
     }).eq('id', depositId);
+
+    if (depErr) {
+      await supabase.from('deposits').upsert(mapDepositToDb(deposit));
+    }
   } catch (err) {
     console.warn('Supabase deposit approval update notice:', err);
   }
@@ -1128,10 +1233,14 @@ export async function approveDeposit(depositId: string, adminNotes?: string): Pr
 
     // Update profiles in Supabase
     try {
-      await supabase.from('profiles').update({
+      const { error: pErr } = await supabase.from('profiles').update({
         balance: user.balance,
         total_deposits: user.totalDeposits,
       }).eq('id', user.id);
+
+      if (pErr) {
+        await supabase.from('profiles').upsert(mapUserToProfile(user));
+      }
     } catch (err) {
       console.warn('Supabase profile balance update notice:', err);
     }
@@ -1147,6 +1256,15 @@ export async function approveDeposit(depositId: string, adminNotes?: string): Pr
         balance: user.balance,
         total_deposits: user.totalDeposits,
       }).eq('id', user.id);
+
+      // Upsert to ensure wallets table record exists with updated balance and total_deposits
+      await supabase.from('wallets').upsert({
+        id: user.id,
+        user_id: user.id,
+        balance: user.balance,
+        total_deposits: user.totalDeposits,
+        updated_at: new Date().toISOString(),
+      });
     } catch (err) {
       console.warn('Supabase wallet balance update notice:', err);
     }
@@ -1157,9 +1275,19 @@ export async function approveDeposit(depositId: string, adminNotes?: string): Pr
   const txIndex = transactions.findIndex((t) => t.referenceId === depositId);
   if (txIndex !== -1) {
     transactions[txIndex].status = 'Completed';
+    transactions[txIndex].amount = deposit.amount;
+    transactions[txIndex].type = 'Deposit';
     setItem(KEYS.TRANSACTIONS, transactions);
     try {
-      await supabase.from('transactions').update({ status: 'Completed' }).eq('reference_id', depositId);
+      const { error: txErr } = await supabase.from('transactions').update({
+        status: 'Completed',
+        amount: deposit.amount,
+        type: 'Deposit',
+      }).eq('reference_id', depositId);
+
+      if (txErr) {
+        await supabase.from('transactions').upsert(mapTransactionToDb(transactions[txIndex]));
+      }
     } catch (err) {
       console.warn('Supabase transaction status update notice:', err);
     }
@@ -1169,14 +1297,14 @@ export async function approveDeposit(depositId: string, adminNotes?: string): Pr
       userId: deposit.userId,
       type: 'Deposit' as const,
       amount: deposit.amount,
-      description: `Deposit approved via ${deposit.bankUsed} (${deposit.transactionRef})`,
+      description: `Deposit approved via ${deposit.bankUsed} (${deposit.transactionRef || deposit.id})`,
       date: new Date().toISOString(),
       status: 'Completed' as const,
       referenceId: deposit.id,
     };
     addTransaction(newTx);
     try {
-      await supabase.from('transactions').insert({
+      await supabase.from('transactions').upsert({
         id: newTx.id,
         user_id: deposit.userId,
         type: 'Deposit',
