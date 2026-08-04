@@ -417,34 +417,8 @@ export async function fetchDataFromSupabase(): Promise<void> {
 
     // Ensure Super Admin exists
     await ensureSuperAdminExistsInSupabase();
-
-    // Broadcast update event after sync
-    window.dispatchEvent(new Event('zelsurvey_storage_updated'));
   } catch (err) {
     console.warn('Supabase fetch sync notice:', err);
-  }
-}
-
-// Setup Realtime Subscriptions for Supabase DB
-export function setupRealtimeSubscriptions(): void {
-  try {
-    supabase
-      .channel('public:db_changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'withdrawals' }, () => {
-        fetchDataFromSupabase();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, () => {
-        fetchDataFromSupabase();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
-        fetchDataFromSupabase();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'deposits' }, () => {
-        fetchDataFromSupabase();
-      })
-      .subscribe();
-  } catch (err) {
-    console.warn('Realtime subscription error:', err);
   }
 }
 
@@ -538,8 +512,7 @@ export function initializeStorage() {
     ]);
   }
 
-  // Initial Supabase Sync & Realtime Setup
-  setupRealtimeSubscriptions();
+  // Initial Supabase Sync
   fetchDataFromSupabase();
   processDailyEarnings();
 
@@ -1029,7 +1002,7 @@ export function createDepositRequest(data: {
 }
 
 // Admin: Approve Deposit
-export async function approveDeposit(depositId: string, adminNotes?: string): Promise<{ success: boolean; message: string }> {
+export function approveDeposit(depositId: string, adminNotes?: string): { success: boolean; message: string } {
   const deposits = getDeposits();
   const index = deposits.findIndex((d) => d.id === depositId);
   if (index === -1) return { success: false, message: 'Deposit request not found.' };
@@ -1038,21 +1011,19 @@ export async function approveDeposit(depositId: string, adminNotes?: string): Pr
   if (deposit.status === 'Approved') return { success: false, message: 'Deposit is already approved.' };
 
   deposit.status = 'Approved';
-  deposit.adminNotes = adminNotes || 'Bank transfer verified by Super Admin';
+  deposit.adminNotes = adminNotes;
   deposit.reviewedAt = new Date().toISOString();
   deposits[index] = deposit;
   setItem(KEYS.DEPOSITS, deposits);
 
   // Push deposit update to Supabase
-  try {
-    await supabase.from('deposits').update({
+  safeDb(
+    supabase.from('deposits').update({
       status: 'Approved',
-      admin_notes: deposit.adminNotes,
+      admin_notes: adminNotes || null,
       reviewed_at: deposit.reviewedAt,
-    }).eq('id', depositId);
-  } catch (err) {
-    console.warn('Supabase deposit approval update notice:', err);
-  }
+    }).eq('id', depositId)
+  );
 
   // Update User Wallet & Total Deposits
   const user = getUserById(deposit.userId);
@@ -1080,8 +1051,6 @@ export async function approveDeposit(depositId: string, adminNotes?: string): Pr
         referrer.balance += rewardTotal;
         referrer.referralEarnings += rewardTotal;
         updateUser(referrer);
-        safeDb(supabase.from('profiles').update({ balance: referrer.balance }).eq('id', referrer.id));
-        safeDb(supabase.from('wallets').update({ balance: referrer.balance }).eq('user_id', referrer.id));
 
         addTransaction({
           userId: referrer.id,
@@ -1107,70 +1076,24 @@ export async function approveDeposit(depositId: string, adminNotes?: string): Pr
     }
 
     updateUser(user);
-
-    // Update profiles in Supabase
-    try {
-      await supabase.from('profiles').update({
-        balance: user.balance,
-        total_deposits: user.totalDeposits,
-      }).eq('id', user.id);
-    } catch (err) {
-      console.warn('Supabase profile balance update notice:', err);
-    }
-
-    // Update wallets in Supabase
-    try {
-      await supabase.from('wallets').update({
-        balance: user.balance,
-        total_deposits: user.totalDeposits,
-      }).eq('user_id', user.id);
-
-      await supabase.from('wallets').update({
-        balance: user.balance,
-        total_deposits: user.totalDeposits,
-      }).eq('id', user.id);
-    } catch (err) {
-      console.warn('Supabase wallet balance update notice:', err);
-    }
   }
 
-  // Update transaction status in local storage and Supabase
+  // Update transaction status
   const transactions = getTransactions();
   const txIndex = transactions.findIndex((t) => t.referenceId === depositId);
   if (txIndex !== -1) {
     transactions[txIndex].status = 'Completed';
     setItem(KEYS.TRANSACTIONS, transactions);
-    try {
-      await supabase.from('transactions').update({ status: 'Completed' }).eq('reference_id', depositId);
-    } catch (err) {
-      console.warn('Supabase transaction status update notice:', err);
-    }
+    safeDb(supabase.from('transactions').update({ status: 'Completed' }).eq('reference_id', depositId));
   } else {
-    const newTx = {
-      id: 'TXN-' + Math.floor(100000 + Math.random() * 900000),
+    addTransaction({
       userId: deposit.userId,
-      type: 'Deposit' as const,
+      type: 'Deposit',
       amount: deposit.amount,
-      description: `Deposit approved via ${deposit.bankUsed} (${deposit.transactionRef})`,
-      date: new Date().toISOString(),
-      status: 'Completed' as const,
+      description: `Deposit approved via ${deposit.bankUsed}`,
+      status: 'Completed',
       referenceId: deposit.id,
-    };
-    addTransaction(newTx);
-    try {
-      await supabase.from('transactions').insert({
-        id: newTx.id,
-        user_id: deposit.userId,
-        type: 'Deposit',
-        amount: deposit.amount,
-        description: newTx.description,
-        date: newTx.date,
-        status: 'Completed',
-        reference_id: deposit.id,
-      });
-    } catch (err) {
-      console.warn('Supabase transaction insert notice:', err);
-    }
+    });
   }
 
   // Notify User
@@ -1180,15 +1103,11 @@ export async function approveDeposit(depositId: string, adminNotes?: string): Pr
     type: 'deposit',
   });
 
-  // Broadcast update & re-fetch from Supabase
-  window.dispatchEvent(new Event('zelsurvey_storage_updated'));
-  await fetchDataFromSupabase();
-
   return { success: true, message: `Deposit of ETB ${deposit.amount.toLocaleString()} approved and wallet credited.` };
 }
 
 // Admin: Reject Deposit
-export async function rejectDeposit(depositId: string, adminNotes?: string): Promise<{ success: boolean; message: string }> {
+export function rejectDeposit(depositId: string, adminNotes?: string): { success: boolean; message: string } {
   const deposits = getDeposits();
   const index = deposits.findIndex((d) => d.id === depositId);
   if (index === -1) return { success: false, message: 'Deposit request not found.' };
@@ -1201,15 +1120,13 @@ export async function rejectDeposit(depositId: string, adminNotes?: string): Pro
   setItem(KEYS.DEPOSITS, deposits);
 
   // Update in Supabase
-  try {
-    await supabase.from('deposits').update({
+  safeDb(
+    supabase.from('deposits').update({
       status: 'Rejected',
       admin_notes: deposit.adminNotes,
       reviewed_at: deposit.reviewedAt,
-    }).eq('id', depositId);
-  } catch (err) {
-    console.warn('Supabase deposit rejection update notice:', err);
-  }
+    }).eq('id', depositId)
+  );
 
   // Update transaction log
   const transactions = getTransactions();
@@ -1217,11 +1134,7 @@ export async function rejectDeposit(depositId: string, adminNotes?: string): Pro
   if (txIndex !== -1) {
     transactions[txIndex].status = 'Failed';
     setItem(KEYS.TRANSACTIONS, transactions);
-    try {
-      await supabase.from('transactions').update({ status: 'Failed' }).eq('reference_id', depositId);
-    } catch (err) {
-      console.warn('Supabase transaction update notice:', err);
-    }
+    safeDb(supabase.from('transactions').update({ status: 'Failed' }).eq('reference_id', depositId));
   }
 
   // Notify User
@@ -1230,10 +1143,6 @@ export async function rejectDeposit(depositId: string, adminNotes?: string): Pro
     message: `Your deposit of ETB ${deposit.amount.toLocaleString()} was rejected: ${deposit.adminNotes}`,
     type: 'deposit',
   });
-
-  // Broadcast update & re-fetch from Supabase
-  window.dispatchEvent(new Event('zelsurvey_storage_updated'));
-  await fetchDataFromSupabase();
 
   return { success: true, message: 'Deposit request rejected.' };
 }
@@ -1376,25 +1285,16 @@ export function requestWithdrawal(data: {
 }
 
 // Admin Process Withdrawal
-export async function processWithdrawal(withdrawalId: string, action: 'approve' | 'reject', notes?: string): Promise<{ success: boolean; message: string }> {
+export function processWithdrawal(withdrawalId: string, action: 'approve' | 'reject', notes?: string) {
   const withdrawals = getWithdrawals();
   const index = withdrawals.findIndex((w) => w.id === withdrawalId);
   if (index === -1) return { success: false, message: 'Withdrawal request not found.' };
 
   const withdrawal = withdrawals[index];
-  const user = getUserById(withdrawal.userId);
-
   if (action === 'approve') {
     withdrawal.status = 'Approved';
     withdrawal.adminNotes = notes || 'Withdrawal processed successfully.';
     withdrawal.reviewedAt = new Date().toISOString();
-
-    if (user) {
-      updateUser(user);
-      safeDb(supabase.from('profiles').update({ balance: user.balance, total_withdrawals: user.totalWithdrawals }).eq('id', user.id));
-      safeDb(supabase.from('wallets').update({ balance: user.balance, total_withdrawals: user.totalWithdrawals }).eq('user_id', user.id));
-      safeDb(supabase.from('wallets').update({ balance: user.balance, total_withdrawals: user.totalWithdrawals }).eq('id', user.id));
-    }
 
     addNotification(withdrawal.userId, {
       title: 'Withdrawal Processed 💸',
@@ -1407,13 +1307,11 @@ export async function processWithdrawal(withdrawalId: string, action: 'approve' 
     withdrawal.reviewedAt = new Date().toISOString();
 
     // Refund user balance
+    const user = getUserById(withdrawal.userId);
     if (user) {
       user.balance += withdrawal.amount;
       user.totalWithdrawals = Math.max(0, user.totalWithdrawals - withdrawal.amount);
       updateUser(user);
-      safeDb(supabase.from('profiles').update({ balance: user.balance, total_withdrawals: user.totalWithdrawals }).eq('id', user.id));
-      safeDb(supabase.from('wallets').update({ balance: user.balance, total_withdrawals: user.totalWithdrawals }).eq('user_id', user.id));
-      safeDb(supabase.from('wallets').update({ balance: user.balance, total_withdrawals: user.totalWithdrawals }).eq('id', user.id));
     }
 
     addNotification(withdrawal.userId, {
@@ -1426,50 +1324,16 @@ export async function processWithdrawal(withdrawalId: string, action: 'approve' 
   withdrawals[index] = withdrawal;
   setItem(KEYS.WITHDRAWALS, withdrawals);
 
-  // 1. Immediately update withdrawals table status in Supabase
-  try {
-    await supabase.from('withdrawals').update({
+  // Push withdrawal update to Supabase
+  safeDb(
+    supabase.from('withdrawals').update({
       status: withdrawal.status,
       admin_notes: withdrawal.adminNotes,
       reviewed_at: withdrawal.reviewedAt,
-    }).eq('id', withdrawalId);
-  } catch (err) {
-    console.warn('Supabase withdrawal update notice:', err);
-  }
+    }).eq('id', withdrawalId)
+  );
 
-  // 2. Update matching transaction record in transactions table
-  const newTxStatus = action === 'approve' ? 'Completed' : 'Failed';
-  const transactions = getTransactions();
-  let txUpdated = false;
-
-  for (let i = 0; i < transactions.length; i++) {
-    const t = transactions[i];
-    if (
-      t.referenceId === withdrawalId ||
-      t.referenceId === withdrawal.id ||
-      (t.userId === withdrawal.userId && t.type === 'Withdrawal' && Math.abs(t.amount - withdrawal.amount) < 0.01 && t.status === 'Pending')
-    ) {
-      transactions[i].status = newTxStatus;
-      txUpdated = true;
-    }
-  }
-
-  if (txUpdated) {
-    setItem(KEYS.TRANSACTIONS, transactions);
-  }
-
-  try {
-    await supabase.from('transactions').update({ status: newTxStatus }).eq('reference_id', withdrawalId);
-    await supabase.from('transactions').update({ status: newTxStatus }).eq('reference_id', withdrawal.id);
-  } catch (err) {
-    console.warn('Supabase transaction status update notice:', err);
-  }
-
-  // 3. Immediately broadcast & trigger re-fetch from Supabase
-  window.dispatchEvent(new Event('zelsurvey_storage_updated'));
-  await fetchDataFromSupabase();
-
-  return { success: true, message: `Withdrawal request ${action === 'approve' ? 'approved' : 'rejected'}.` };
+  return { success: true, message: `Withdrawal request ${action}d.` };
 }
 
 // Investment Plan Actions

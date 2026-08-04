@@ -156,7 +156,7 @@ export interface Transaction {
   amount: number;
   description: string;
   date: string;
-  status: 'Completed' | 'Pending' | 'Failed' | 'Rejected';
+  status: 'Completed' | 'Pending' | 'Failed';
   referenceId?: string;
 }
 

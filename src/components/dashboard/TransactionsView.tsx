@@ -120,9 +120,9 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({ user }) => {
                           Pending
                         </span>
                       )}
-                      {(tx.status === 'Failed' || tx.status === 'Rejected') && (
+                      {tx.status === 'Failed' && (
                         <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-red-500/10 text-red-600">
-                          {tx.status === 'Rejected' ? 'Rejected' : 'Failed'}
+                          Failed
                         </span>
                       )}
                     </td>
