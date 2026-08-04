@@ -119,10 +119,11 @@ export const COMPANY_BANK_ACCOUNT: BankAccountInfo = {
 // Helper to safely load data from Local Cache
 function getItem<T>(key: string, defaultValue: T): T {
   try {
+    if (typeof window === 'undefined' || !window.localStorage) return defaultValue;
     const item = localStorage.getItem(key);
     return item ? JSON.parse(item) : defaultValue;
   } catch (e) {
-    console.error(`Error reading ${key}`, e);
+    console.warn(`Error reading ${key}`, e);
     return defaultValue;
   }
 }
@@ -130,10 +131,13 @@ function getItem<T>(key: string, defaultValue: T): T {
 // Helper to save data to Local Cache & emit update event
 function setItem<T>(key: string, value: T): void {
   try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
     localStorage.setItem(key, JSON.stringify(value));
-    window.dispatchEvent(new Event('zelsurvey_storage_updated'));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('zelsurvey_storage_updated'));
+    }
   } catch (e) {
-    console.error(`Error writing ${key}`, e);
+    console.warn(`Error writing ${key}`, e);
   }
 }
 
@@ -372,7 +376,12 @@ export async function fetchDataFromSupabase(): Promise<void> {
       // Sync current logged in user
       const currentUser = getCurrentUser();
       if (currentUser) {
-        const freshCurrent = usersList.find((u) => u.id === currentUser.id || u.email.toLowerCase() === currentUser.email.toLowerCase());
+        const freshCurrent = usersList.find(
+          (u) =>
+            u &&
+            (u.id === currentUser.id ||
+              (u.email && currentUser.email && u.email.toLowerCase() === currentUser.email.toLowerCase()))
+        );
         if (freshCurrent) {
           setCurrentUser(freshCurrent);
         }
@@ -419,7 +428,9 @@ export async function fetchDataFromSupabase(): Promise<void> {
     await ensureSuperAdminExistsInSupabase();
 
     // Broadcast update event after sync
-    window.dispatchEvent(new Event('zelsurvey_storage_updated'));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('zelsurvey_storage_updated'));
+    }
   } catch (err) {
     console.warn('Supabase fetch sync notice:', err);
   }
@@ -469,7 +480,7 @@ export async function ensureSuperAdminExistsInSupabase(): Promise<User> {
   };
 
   const users = getItem<User[]>(KEYS.USERS, []);
-  let existingAdmin = users.find((u) => u.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase());
+  let existingAdmin = users.find((u) => u && u.email && u.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase());
 
   if (!existingAdmin) {
     users.unshift(superAdmin);
@@ -493,71 +504,78 @@ export async function ensureSuperAdminExistsInSupabase(): Promise<User> {
 
 // Initializer
 export function initializeStorage() {
-  if (!localStorage.getItem(KEYS.USERS)) {
-    setItem(KEYS.USERS, []);
-  }
+  try {
+    if (!getItem(KEYS.USERS, null)) {
+      setItem(KEYS.USERS, []);
+    }
 
-  if (!localStorage.getItem(KEYS.SETTINGS)) {
-    setItem(KEYS.SETTINGS, DEFAULT_PLATFORM_SETTINGS);
-  }
+    if (!getItem(KEYS.SETTINGS, null)) {
+      setItem(KEYS.SETTINGS, DEFAULT_PLATFORM_SETTINGS);
+    }
 
-  if (!localStorage.getItem(KEYS.PLANS)) {
-    setItem(KEYS.PLANS, DEFAULT_PLANS);
-  }
+    if (!getItem(KEYS.PLANS, null)) {
+      setItem(KEYS.PLANS, DEFAULT_PLANS);
+    }
 
-  if (!localStorage.getItem(KEYS.DEPOSITS)) {
-    setItem(KEYS.DEPOSITS, []);
-  }
+    if (!getItem(KEYS.DEPOSITS, null)) {
+      setItem(KEYS.DEPOSITS, []);
+    }
 
-  if (!localStorage.getItem(KEYS.WITHDRAWALS)) {
-    setItem(KEYS.WITHDRAWALS, []);
-  }
+    if (!getItem(KEYS.WITHDRAWALS, null)) {
+      setItem(KEYS.WITHDRAWALS, []);
+    }
 
-  if (!localStorage.getItem(KEYS.INVESTMENTS)) {
-    setItem(KEYS.INVESTMENTS, []);
-  }
+    if (!getItem(KEYS.INVESTMENTS, null)) {
+      setItem(KEYS.INVESTMENTS, []);
+    }
 
-  if (!localStorage.getItem(KEYS.TRANSACTIONS)) {
-    setItem(KEYS.TRANSACTIONS, []);
-  }
+    if (!getItem(KEYS.TRANSACTIONS, null)) {
+      setItem(KEYS.TRANSACTIONS, []);
+    }
 
-  if (!localStorage.getItem(KEYS.NOTIFICATIONS)) {
-    setItem(KEYS.NOTIFICATIONS, []);
-  }
+    if (!getItem(KEYS.NOTIFICATIONS, null)) {
+      setItem(KEYS.NOTIFICATIONS, []);
+    }
 
-  if (!localStorage.getItem(KEYS.ANNOUNCEMENTS)) {
-    setItem(KEYS.ANNOUNCEMENTS, [
-      {
-        id: 'anc-1',
-        title: 'Welcome to ZelSurvey',
-        message: 'Welcome to the premier Ethiopian investment platform. Deposit via secure bank transfer and start growing your portfolio today.',
-        date: new Date().toISOString(),
-        target: 'all',
-        author: 'ZelSurvey Super Admin',
-      },
-    ]);
-  }
+    if (!getItem(KEYS.ANNOUNCEMENTS, null)) {
+      setItem(KEYS.ANNOUNCEMENTS, [
+        {
+          id: 'anc-1',
+          title: 'Welcome to ZelSurvey',
+          message: 'Welcome to the premier Ethiopian investment platform. Deposit via secure bank transfer and start growing your portfolio today.',
+          date: new Date().toISOString(),
+          target: 'all',
+          author: 'ZelSurvey Super Admin',
+        },
+      ]);
+    }
 
-  // Initial Supabase Sync & Realtime Setup
-  setupRealtimeSubscriptions();
-  fetchDataFromSupabase();
-  processDailyEarnings();
-
-  // Polling every 6 seconds to keep live data synced & daily earnings processed
-  setInterval(() => {
+    // Initial Supabase Sync & Realtime Setup
+    setupRealtimeSubscriptions();
     fetchDataFromSupabase();
     processDailyEarnings();
-  }, 6000);
+
+    // Polling every 6 seconds to keep live data synced & daily earnings processed
+    setInterval(() => {
+      fetchDataFromSupabase();
+      processDailyEarnings();
+    }, 6000);
+  } catch (err) {
+    console.warn('initializeStorage exception:', err);
+  }
 }
 
 // Check if user is Super Admin
-export function isSuperAdminAccount(userOrEmail: User | string): boolean {
+export function isSuperAdminAccount(userOrEmail: User | string | null | undefined): boolean {
+  if (!userOrEmail) return false;
   if (typeof userOrEmail === 'string') {
     return userOrEmail.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
   }
+  const email = userOrEmail.email || '';
+  const username = userOrEmail.username || '';
   return (
-    userOrEmail.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() ||
-    userOrEmail.username.toLowerCase() === 'superadmin' ||
+    (email !== '' && email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()) ||
+    (username !== '' && username.toLowerCase() === 'superadmin') ||
     userOrEmail.id === 'user-super-admin-king'
   );
 }
@@ -570,7 +588,7 @@ function safeDb(builder: any): void {
 // Ensure Super Admin exists (synchronous wrapper)
 export function ensureSuperAdminExists(): User {
   const users = getItem<User[]>(KEYS.USERS, []);
-  let superAdmin = users.find((u) => u.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase());
+  let superAdmin = users.find((u) => u && u.email && u.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase());
 
   if (!superAdmin) {
     superAdmin = {
@@ -743,7 +761,7 @@ export async function registerUserAsync(userData: {
 
   const users = getUsers();
 
-  const existingUsername = users.find((u) => u.username.toLowerCase() === userData.username.toLowerCase());
+  const existingUsername = users.find((u) => u && u.username && u.username.toLowerCase() === userData.username.toLowerCase());
   if (existingUsername) {
     return { success: false, message: 'This username is already taken. Please choose another.' };
   }
@@ -812,7 +830,7 @@ export async function registerUserAsync(userData: {
   }
 
   // Update local cache
-  const existingIdx = users.findIndex((u) => u.id === newUser.id || u.email.toLowerCase() === newUser.email.toLowerCase());
+  const existingIdx = users.findIndex((u) => u && (u.id === newUser.id || (u.email && u.email.toLowerCase() === newUser.email.toLowerCase())));
   if (existingIdx !== -1) {
     users[existingIdx] = newUser;
   } else {
@@ -830,7 +848,7 @@ export async function registerUserAsync(userData: {
 
   // Handle referral notification
   if (userData.referralCode) {
-    const referrer = users.find((u) => u.referralCode.toLowerCase() === userData.referralCode?.toLowerCase());
+    const referrer = users.find((u) => u && u.referralCode && u.referralCode.toLowerCase() === userData.referralCode?.toLowerCase());
     if (referrer) {
       addNotification(referrer.id, {
         title: 'New Referral Registered',
@@ -886,7 +904,7 @@ export async function loginUserAsync(loginInput: string, passwordInput: string):
   let targetEmail = trimmedInput;
   if (!targetEmail.includes('@')) {
     const users = getUsers();
-    const cached = users.find((u) => u.username.toLowerCase() === targetEmail.toLowerCase());
+    const cached = users.find((u) => u && u.username && u.username.toLowerCase() === targetEmail.toLowerCase());
     if (cached && cached.email) {
       targetEmail = cached.email;
     } else {

@@ -47,8 +47,13 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [authMode, setAuthMode] = useState<AuthMode>('none');
   const [darkMode, setDarkMode] = useState<boolean>(() => {
-    return localStorage.getItem('zelsurvey_theme') === 'dark';
+    try {
+      return localStorage.getItem('zelsurvey_theme') === 'dark';
+    } catch {
+      return false;
+    }
   });
+
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [selectedPlanForAuth, setSelectedPlanForAuth] = useState<string>('');
   const [showLogoutConfirm, setShowLogoutConfirm] = useState<boolean>(false);
@@ -58,14 +63,22 @@ export default function App() {
 
   const refreshData = () => {
     setDataVersion((v) => v + 1);
-    const updated = getCurrentUser();
-    setCurrentUserState(updated);
+    try {
+      const updated = getCurrentUser();
+      setCurrentUserState(updated);
+    } catch (e) {
+      console.warn('refreshData error:', e);
+    }
   };
 
   useEffect(() => {
-    initializeStorage();
-    const user = getCurrentUser();
-    setCurrentUserState(user);
+    try {
+      initializeStorage();
+      const user = getCurrentUser();
+      setCurrentUserState(user);
+    } catch (e) {
+      console.warn('initializeStorage effect error:', e);
+    }
 
     const handleStorageUpdate = () => {
       refreshData();
@@ -75,8 +88,12 @@ export default function App() {
 
     // Periodic check for daily earnings payouts
     const interval = setInterval(() => {
-      processDailyEarnings();
-      refreshData();
+      try {
+        processDailyEarnings();
+        refreshData();
+      } catch (e) {
+        console.warn('Interval error:', e);
+      }
     }, 10000);
 
     return () => {
@@ -87,12 +104,16 @@ export default function App() {
 
   // Sync Dark Mode class on <html>
   useEffect(() => {
-    if (darkMode) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('zelsurvey_theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('zelsurvey_theme', 'light');
+    try {
+      if (darkMode) {
+        document.documentElement.classList.add('dark');
+        localStorage.setItem('zelsurvey_theme', 'dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+        localStorage.setItem('zelsurvey_theme', 'light');
+      }
+    } catch (e) {
+      console.warn('Dark mode storage error:', e);
     }
   }, [darkMode]);
 
@@ -250,7 +271,7 @@ export default function App() {
               <InvestmentPlansView
                 user={currentUser}
                 onPlanPurchased={refreshData}
-                setActiveTab={setActiveTab}
+                setActiveTab={(tab) => setActiveTab(tab as ActiveTab)}
                 showToast={showToast}
               />
             )}
@@ -258,7 +279,7 @@ export default function App() {
             {activeTab === 'my-investments' && currentUser && (
               <MyInvestmentsView
                 user={currentUser}
-                setActiveTab={setActiveTab}
+                setActiveTab={(tab) => setActiveTab(tab as ActiveTab)}
               />
             )}
 
@@ -275,14 +296,13 @@ export default function App() {
               <MembershipView
                 user={currentUser}
                 onNavigateToDeposit={() => setActiveTab('deposit')}
-                setActiveTab={setActiveTab}
+                setActiveTab={(tab) => setActiveTab(tab as ActiveTab)}
               />
             )}
 
             {activeTab === 'achievements' && currentUser && (
               <AchievementsView
                 user={currentUser}
-                showToast={showToast}
               />
             )}
 
