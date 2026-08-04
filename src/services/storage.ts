@@ -417,8 +417,34 @@ export async function fetchDataFromSupabase(): Promise<void> {
 
     // Ensure Super Admin exists
     await ensureSuperAdminExistsInSupabase();
+
+    // Broadcast update event after sync
+    window.dispatchEvent(new Event('zelsurvey_storage_updated'));
   } catch (err) {
     console.warn('Supabase fetch sync notice:', err);
+  }
+}
+
+// Setup Realtime Subscriptions for Supabase DB
+export function setupRealtimeSubscriptions(): void {
+  try {
+    supabase
+      .channel('public:db_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'withdrawals' }, () => {
+        fetchDataFromSupabase();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'transactions' }, () => {
+        fetchDataFromSupabase();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
+        fetchDataFromSupabase();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'deposits' }, () => {
+        fetchDataFromSupabase();
+      })
+      .subscribe();
+  } catch (err) {
+    console.warn('Realtime subscription error:', err);
   }
 }
 
@@ -512,7 +538,8 @@ export function initializeStorage() {
     ]);
   }
 
-  // Initial Supabase Sync
+  // Initial Supabase Sync & Realtime Setup
+  setupRealtimeSubscriptions();
   fetchDataFromSupabase();
   processDailyEarnings();
 
@@ -1285,16 +1312,25 @@ export function requestWithdrawal(data: {
 }
 
 // Admin Process Withdrawal
-export function processWithdrawal(withdrawalId: string, action: 'approve' | 'reject', notes?: string) {
+export async function processWithdrawal(withdrawalId: string, action: 'approve' | 'reject', notes?: string): Promise<{ success: boolean; message: string }> {
   const withdrawals = getWithdrawals();
   const index = withdrawals.findIndex((w) => w.id === withdrawalId);
   if (index === -1) return { success: false, message: 'Withdrawal request not found.' };
 
   const withdrawal = withdrawals[index];
+  const user = getUserById(withdrawal.userId);
+
   if (action === 'approve') {
     withdrawal.status = 'Approved';
     withdrawal.adminNotes = notes || 'Withdrawal processed successfully.';
     withdrawal.reviewedAt = new Date().toISOString();
+
+    if (user) {
+      updateUser(user);
+      safeDb(supabase.from('profiles').update({ balance: user.balance, total_withdrawals: user.totalWithdrawals }).eq('id', user.id));
+      safeDb(supabase.from('wallets').update({ balance: user.balance, total_withdrawals: user.totalWithdrawals }).eq('user_id', user.id));
+      safeDb(supabase.from('wallets').update({ balance: user.balance, total_withdrawals: user.totalWithdrawals }).eq('id', user.id));
+    }
 
     addNotification(withdrawal.userId, {
       title: 'Withdrawal Processed 💸',
@@ -1307,11 +1343,13 @@ export function processWithdrawal(withdrawalId: string, action: 'approve' | 'rej
     withdrawal.reviewedAt = new Date().toISOString();
 
     // Refund user balance
-    const user = getUserById(withdrawal.userId);
     if (user) {
       user.balance += withdrawal.amount;
       user.totalWithdrawals = Math.max(0, user.totalWithdrawals - withdrawal.amount);
       updateUser(user);
+      safeDb(supabase.from('profiles').update({ balance: user.balance, total_withdrawals: user.totalWithdrawals }).eq('id', user.id));
+      safeDb(supabase.from('wallets').update({ balance: user.balance, total_withdrawals: user.totalWithdrawals }).eq('user_id', user.id));
+      safeDb(supabase.from('wallets').update({ balance: user.balance, total_withdrawals: user.totalWithdrawals }).eq('id', user.id));
     }
 
     addNotification(withdrawal.userId, {
@@ -1324,16 +1362,50 @@ export function processWithdrawal(withdrawalId: string, action: 'approve' | 'rej
   withdrawals[index] = withdrawal;
   setItem(KEYS.WITHDRAWALS, withdrawals);
 
-  // Push withdrawal update to Supabase
-  safeDb(
-    supabase.from('withdrawals').update({
+  // 1. Immediately update withdrawals table status in Supabase
+  try {
+    await supabase.from('withdrawals').update({
       status: withdrawal.status,
       admin_notes: withdrawal.adminNotes,
       reviewed_at: withdrawal.reviewedAt,
-    }).eq('id', withdrawalId)
-  );
+    }).eq('id', withdrawalId);
+  } catch (err) {
+    console.warn('Supabase withdrawal update notice:', err);
+  }
 
-  return { success: true, message: `Withdrawal request ${action}d.` };
+  // 2. Update matching transaction record in transactions table
+  const newTxStatus = action === 'approve' ? 'Completed' : 'Failed';
+  const transactions = getTransactions();
+  let txUpdated = false;
+
+  for (let i = 0; i < transactions.length; i++) {
+    const t = transactions[i];
+    if (
+      t.referenceId === withdrawalId ||
+      t.referenceId === withdrawal.id ||
+      (t.userId === withdrawal.userId && t.type === 'Withdrawal' && Math.abs(t.amount - withdrawal.amount) < 0.01 && t.status === 'Pending')
+    ) {
+      transactions[i].status = newTxStatus;
+      txUpdated = true;
+    }
+  }
+
+  if (txUpdated) {
+    setItem(KEYS.TRANSACTIONS, transactions);
+  }
+
+  try {
+    await supabase.from('transactions').update({ status: newTxStatus }).eq('reference_id', withdrawalId);
+    await supabase.from('transactions').update({ status: newTxStatus }).eq('reference_id', withdrawal.id);
+  } catch (err) {
+    console.warn('Supabase transaction status update notice:', err);
+  }
+
+  // 3. Immediately broadcast & trigger re-fetch from Supabase
+  window.dispatchEvent(new Event('zelsurvey_storage_updated'));
+  await fetchDataFromSupabase();
+
+  return { success: true, message: `Withdrawal request ${action === 'approve' ? 'approved' : 'rejected'}.` };
 }
 
 // Investment Plan Actions

@@ -174,8 +174,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   // Withdrawal Actions
-  const handleProcessWithdrawal = (wId: string, action: 'approve' | 'reject') => {
-    const res = processWithdrawal(wId, action, action === 'approve' ? 'Payout Fulfilled' : 'Withdrawal Declined');
+  const handleProcessWithdrawal = async (wId: string, action: 'approve' | 'reject') => {
+    const res = await processWithdrawal(wId, action, action === 'approve' ? 'Payout Fulfilled' : 'Withdrawal Declined');
     if (res.success) {
       showToast(action === 'approve' ? 'success' : 'info', 'Withdrawal Processed', res.message);
       onDataChanged();
