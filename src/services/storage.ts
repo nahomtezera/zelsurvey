@@ -203,7 +203,7 @@ function mapDepositToDb(d: DepositRequest): any {
   };
 }
 
-function mapDbToDeposit(d: any): DepositRequest {
+export function mapDbToDeposit(d: any): DepositRequest {
   return {
     id: d.id,
     userId: d.user_id || d.userId,
@@ -416,34 +416,7 @@ export async function fetchDataFromSupabase(): Promise<void> {
     // 2. Fetch Deposits
     const { data: deposits } = await supabase.from('deposits').select('*').order('date', { ascending: false });
     if (deposits) {
-      const dbDeposits = deposits.map(mapDbToDeposit);
-      const localDeposits = getItem<DepositRequest[]>(KEYS.DEPOSITS, []);
-
-      const mergedDepositsMap = new Map<string, DepositRequest>();
-      dbDeposits.forEach((dbDep) => {
-        mergedDepositsMap.set(dbDep.id, dbDep);
-      });
-
-      localDeposits.forEach((localDep) => {
-        const dbDep = mergedDepositsMap.get(localDep.id);
-        if (dbDep) {
-          if ((localDep.status === 'Approved' || localDep.status === 'Rejected') && dbDep.status === 'Pending') {
-            mergedDepositsMap.set(localDep.id, {
-              ...dbDep,
-              status: localDep.status,
-              reviewedAt: localDep.reviewedAt || dbDep.reviewedAt,
-              adminNotes: localDep.adminNotes || dbDep.adminNotes,
-            });
-          }
-        } else {
-          mergedDepositsMap.set(localDep.id, localDep);
-        }
-      });
-
-      const mergedDeposits = Array.from(mergedDepositsMap.values()).sort(
-        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-      );
-      setItem(KEYS.DEPOSITS, mergedDeposits);
+      setItem(KEYS.DEPOSITS, deposits.map(mapDbToDeposit));
     }
 
     // 3. Fetch Withdrawals

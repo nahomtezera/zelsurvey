@@ -40,7 +40,6 @@ import {
 } from 'lucide-react';
 import { 
   getUsers, 
-  getDeposits, 
   getWithdrawals, 
   getPlans, 
   updatePlans,
@@ -56,8 +55,10 @@ import {
   addNotification,
   isSuperAdminAccount,
   triggerReferralReward,
-  PlatformSettings
+  PlatformSettings,
+  mapDbToDeposit
 } from '../../services/storage';
+import { supabase } from '../../lib/supabase';
 import { User, DepositRequest, WithdrawalRequest, InvestmentPlan, Transaction } from '../../types';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid } from 'recharts';
 
@@ -129,9 +130,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // Platform Settings Form
   const [settingsForm, setSettingsForm] = useState<PlatformSettings>(() => getPlatformSettings());
 
+  // Deposits loaded directly from Supabase (Source of truth)
+  const [deposits, setDeposits] = useState<DepositRequest[]>([]);
+
+  const fetchAdminDeposits = React.useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('deposits')
+        .select('*')
+        .order('date', { ascending: false });
+
+      if (!error && data) {
+        setDeposits(data.map(mapDbToDeposit));
+      }
+    } catch (err) {
+      console.error('Error fetching admin deposits:', err);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    fetchAdminDeposits();
+  }, [fetchAdminDeposits]);
+
   // Data queries
   const users = getUsers();
-  const deposits = getDeposits();
   const withdrawals = getWithdrawals();
   const plans = getPlans();
   const transactions = getTransactions();
@@ -157,6 +179,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     const res = await approveDeposit(depId, adminNotesInput || 'Bank transfer verified by Super Admin');
     if (res.success) {
       showToast('success', 'Deposit Verified! 💰', res.message);
+      await fetchAdminDeposits();
       onDataChanged();
       setSelectedProofUrl(null);
       setReviewDepositId(null);
@@ -180,6 +203,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     const res = await rejectDeposit(depId, reason);
     if (res.success) {
       showToast('info', 'Deposit Rejected', res.message);
+      await fetchAdminDeposits();
       onDataChanged();
       setSelectedProofUrl(null);
       setReviewDepositId(null);
