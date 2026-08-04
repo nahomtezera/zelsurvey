@@ -35,7 +35,8 @@ import {
   Download,
   Filter,
   Activity,
-  ArrowRight
+  ArrowRight,
+  FileText
 } from 'lucide-react';
 import { 
   getUsers, 
@@ -99,10 +100,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [txSearch, setTxSearch] = useState('');
   const [txTypeFilter, setTxTypeFilter] = useState<string>('All');
 
-  // Screenshot Proof Inspector Modal
+  // Screenshot Proof Inspector & Detail Modal
   const [selectedProofUrl, setSelectedProofUrl] = useState<string | null>(null);
   const [adminNotesInput, setAdminNotesInput] = useState('');
   const [reviewDepositId, setReviewDepositId] = useState<string | null>(null);
+  const [viewDepositDetail, setViewDepositDetail] = useState<DepositRequest | null>(null);
 
   // User Actions Modals
   const [editUserModal, setEditUserModal] = useState<User | null>(null);
@@ -147,27 +149,41 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const totalTransactionsCount = transactions.length;
 
   // Deposit Actions
-  const handleApproveDeposit = (depId: string) => {
-    const res = approveDeposit(depId, adminNotesInput || 'Bank transfer verified by Super Admin');
+  const handleApproveDeposit = async (depId: string) => {
+    const res = await approveDeposit(depId, adminNotesInput || 'Bank transfer verified by Super Admin');
     if (res.success) {
       showToast('success', 'Deposit Verified! 💰', res.message);
       onDataChanged();
       setSelectedProofUrl(null);
       setReviewDepositId(null);
       setAdminNotesInput('');
+      setViewDepositDetail(null);
+      if (depositFilter === 'Pending') {
+        setDepositFilter('Approved');
+      }
     } else {
       showToast('error', 'Approval Error', res.message);
     }
   };
 
-  const handleRejectDeposit = (depId: string) => {
-    const res = rejectDeposit(depId, adminNotesInput || 'Invalid payment reference or unconfirmed bank transfer');
+  const handleRejectDeposit = async (depId: string, customReason?: string) => {
+    let reason = customReason || adminNotesInput;
+    if (!reason) {
+      const promptReason = window.prompt("Enter rejection reason (optional):", "Invalid payment reference or unconfirmed bank transfer");
+      if (promptReason === null) return;
+      reason = promptReason || 'Invalid payment reference or unconfirmed bank transfer';
+    }
+    const res = await rejectDeposit(depId, reason);
     if (res.success) {
       showToast('info', 'Deposit Rejected', res.message);
       onDataChanged();
       setSelectedProofUrl(null);
       setReviewDepositId(null);
       setAdminNotesInput('');
+      setViewDepositDetail(null);
+      if (depositFilter === 'Pending') {
+        setDepositFilter('Rejected');
+      }
     } else {
       showToast('error', 'Action Error', res.message);
     }
@@ -1096,17 +1112,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             </td>
 
                             <td className="py-3.5 px-4 text-right">
-                              <div className="flex items-center justify-end gap-2">
+                              <div className="flex items-center justify-end gap-1.5 flex-wrap">
                                 {d.paymentProofUrl && (
                                   <button
                                     onClick={() => {
                                       setSelectedProofUrl(d.paymentProofUrl || null);
                                       setReviewDepositId(d.id);
                                     }}
-                                    className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer"
+                                    className="px-2.5 py-1 rounded-lg bg-purple-950/60 border border-purple-800/60 hover:bg-purple-900 text-purple-300 text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer"
+                                    title="View Payment Proof Screenshot"
                                   >
                                     <Eye className="w-3.5 h-3.5 text-purple-400" />
-                                    <span>Screenshot</span>
+                                    <span>View Screenshot</span>
                                   </button>
                                 )}
 
@@ -1115,6 +1132,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                     <button
                                       onClick={() => handleApproveDeposit(d.id)}
                                       className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-colors flex items-center gap-1 cursor-pointer"
+                                      title="Approve Deposit"
                                     >
                                       <Check className="w-3.5 h-3.5" />
                                       <span>Approve</span>
@@ -1123,12 +1141,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                     <button
                                       onClick={() => handleRejectDeposit(d.id)}
                                       className="px-3 py-1 rounded-lg bg-rose-600/30 border border-rose-500/40 text-rose-300 hover:bg-rose-600 hover:text-white font-bold text-xs transition-colors flex items-center gap-1 cursor-pointer"
+                                      title="Reject Deposit"
                                     >
                                       <X className="w-3.5 h-3.5" />
                                       <span>Reject</span>
                                     </button>
                                   </>
                                 )}
+
+                                <button
+                                  onClick={() => setViewDepositDetail(d)}
+                                  className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition-colors flex items-center gap-1 cursor-pointer"
+                                  title="View Full Deposit Details"
+                                >
+                                  <FileText className="w-3.5 h-3.5 text-blue-400" />
+                                  <span>View Details</span>
+                                </button>
                               </div>
                             </td>
                           </tr>
@@ -2221,6 +2249,117 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* DEPOSIT DETAILS MODAL */}
+      {viewDepositDetail && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 space-y-4 text-xs">
+            <div className="flex justify-between items-center pb-2 border-b border-slate-800">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <FileText className="w-4 h-4 text-blue-400" />
+                <span>Deposit Request Details</span>
+              </h3>
+              <button
+                onClick={() => setViewDepositDetail(null)}
+                className="p-1 rounded-lg bg-slate-800 text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 text-slate-300">
+              <div>
+                <p className="text-[10px] text-slate-500 font-bold uppercase">Investor Name</p>
+                <p className="font-bold text-white text-sm">{viewDepositDetail.userName}</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-slate-500 font-bold uppercase">Email Address</p>
+                <p className="font-mono text-xs text-slate-400">{viewDepositDetail.userEmail}</p>
+              </div>
+
+              <div>
+                <p className="text-[10px] text-slate-500 font-bold uppercase">Deposit Amount</p>
+                <p className="font-black text-emerald-400 text-base">ETB {viewDepositDetail.amount.toLocaleString()}</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-slate-500 font-bold uppercase">Status</p>
+                <span className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                  viewDepositDetail.status === 'Approved' ? 'bg-emerald-500/20 text-emerald-300' :
+                  viewDepositDetail.status === 'Rejected' ? 'bg-rose-500/20 text-rose-300' : 'bg-amber-500/20 text-amber-300'
+                }`}>
+                  {viewDepositDetail.status}
+                </span>
+              </div>
+
+              <div>
+                <p className="text-[10px] text-slate-500 font-bold uppercase">Bank Used</p>
+                <p className="font-semibold text-white">{viewDepositDetail.bankUsed}</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-slate-500 font-bold uppercase">Transaction Ref / ID</p>
+                <p className="font-mono text-purple-300 font-bold">{viewDepositDetail.transactionRef}</p>
+              </div>
+
+              <div className="col-span-2">
+                <p className="text-[10px] text-slate-500 font-bold uppercase">Date Submitted</p>
+                <p className="text-slate-300">{new Date(viewDepositDetail.date).toLocaleString()}</p>
+              </div>
+
+              {viewDepositDetail.adminNotes && (
+                <div className="col-span-2 bg-slate-950 p-3 rounded-xl border border-slate-800">
+                  <p className="text-[10px] text-slate-500 font-bold uppercase">Admin Notes / Remarks</p>
+                  <p className="text-slate-300 font-mono mt-0.5">{viewDepositDetail.adminNotes}</p>
+                </div>
+              )}
+            </div>
+
+            {viewDepositDetail.paymentProofUrl && (
+              <div className="space-y-1.5 pt-2 border-t border-slate-800">
+                <p className="text-[10px] text-slate-500 font-bold uppercase">Uploaded Payment Proof</p>
+                <div className="bg-slate-950 p-2 rounded-xl border border-slate-800 overflow-hidden flex items-center justify-center max-h-[200px]">
+                  <img
+                    src={viewDepositDetail.paymentProofUrl}
+                    alt="Payment proof"
+                    className="max-h-[190px] w-auto object-contain rounded-lg"
+                  />
+                </div>
+              </div>
+            )}
+
+            {viewDepositDetail.status === 'Pending' && (
+              <div className="space-y-3 pt-3 border-t border-slate-800">
+                <div>
+                  <label className="block font-bold text-slate-300 mb-1">Admin Verification Notes (Optional)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Bank Ref confirmed in online banking"
+                    value={adminNotesInput}
+                    onChange={(e) => setAdminNotesInput(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-white outline-none"
+                  />
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => handleApproveDeposit(viewDepositDetail.id)}
+                    className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>Approve Deposit</span>
+                  </button>
+                  <button
+                    onClick={() => handleRejectDeposit(viewDepositDetail.id)}
+                    className="flex-1 py-2.5 bg-rose-600/30 border border-rose-500/40 text-rose-300 hover:bg-rose-600 hover:text-white font-bold rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <X className="w-4 h-4" />
+                    <span>Reject Deposit</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
